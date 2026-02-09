@@ -12,7 +12,7 @@ function App() {
   const [activeTab, setActiveTab] = useState<'scheduler' | 'database' | 'settings' | 'visual'>('scheduler');
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
+    <div className="h-screen flex flex-col bg-gray-50 overflow-hidden print:h-auto print:overflow-visible">
       {/* Header */}
       <header className="bg-white border-b px-6 py-4 flex items-center gap-3 shadow-sm z-10 print:hidden">
         <div className="bg-blue-600 p-2 rounded-lg text-white">
@@ -65,7 +65,8 @@ function App() {
       </div>
 
       {/* Main Content */}
-      <main className="flex-1 bg-white mx-6 mb-6 border border-gray-200 rounded-b-lg rounded-tr-lg shadow-sm overflow-hidden p-4 relative print:m-0 print:border-none print:shadow-none print:p-0">
+      {/* Main Content */}
+      <main className="flex-1 bg-white mx-6 mb-6 border border-gray-200 rounded-b-lg rounded-tr-lg shadow-sm overflow-hidden p-4 relative print:m-0 print:border-none print:shadow-none print:p-0 print:overflow-visible">
         {activeTab === 'scheduler' && <ProductionScheduler />}
         {activeTab === 'visual' && <VisualSchedule />}
         {activeTab === 'database' && <DatabaseLayout />}

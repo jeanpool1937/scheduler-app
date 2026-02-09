@@ -30,6 +30,8 @@ export interface ProductionScheduleItem {
   changeoverMinutes?: number; // Calculated from Changeover Matrix
   qualityChangeMinutes?: number; // Calculated: 60 mins if same measure but diff quality
   stopChangeMinutes?: number; // Calculated: 10 mins if same measure+quality but diff length
+  ringChangeMinutes?: number; // Calculated: Daily at 18:30 if no >60min stoppage in prev 7h
+  channelChangeMinutes?: number; // Calculated: Daily at 6:30 AM
   adjustmentMinutes?: number; // Acierto y Calibracion
 
   // Dynamic Stoppages: key is stoppageId, value is minutes
@@ -37,23 +39,48 @@ export interface ProductionScheduleItem {
 
   startTime: Date;
   endTime: Date;
+
+  // Simulation Results
+  computedStart?: Date;
+  computedEnd?: Date;
+  segments?: {
+    type: 'production' | 'setup' | 'maintenance_hp' | 'forced_stop';
+    start: Date;
+    end: Date;
+    durationMinutes: number;
+    label: string;
+    description: string;
+    color: string;
+  }[];
 }
 
 export interface AppState {
   schedule: ProductionScheduleItem[];
   stoppageConfigs: StoppageConfig[];
+  programStartDate: Date;
+  columnLabels: Record<string, string>; // Custom column labels
+  scheduleHistory: ProductionScheduleItem[][]; // Undo history (max 5)
+  holidays: string[]; // Array of ISO date strings (YYYY-MM-DD)
 
   // Actions
-
+  addScheduleItem: (item: Omit<ProductionScheduleItem, 'id' | 'sequenceOrder'>) => void;
   updateScheduleItem: (id: string, updates: Partial<ProductionScheduleItem>) => void;
-  addScheduleItem: (item: ProductionScheduleItem) => void;
-  addScheduleItems: (items: ProductionScheduleItem[]) => void;
   deleteScheduleItem: (id: string) => void;
-  clearSchedule: () => void;
   reorderSchedule: (newOrder: ProductionScheduleItem[]) => void;
-
-  addStoppageConfig: (config: StoppageConfig) => void;
-  removeStoppageConfig: (id: string) => void;
-
   recalculateSchedule: () => void;
+  setProgramStartDate: (date: Date) => void;
+  undo: () => void;
+  canUndo: () => boolean;
+  // Column Labels
+  setColumnLabel: (field: string, label: string) => void;
+
+  // Import/Export
+  setSchedule: (schedule: ProductionScheduleItem[]) => void;
+  setStoppageConfigs: (configs: StoppageConfig[]) => void;
+  importColumnLabels: (labels: Record<string, string>) => void;
+
+  // Holidays Management
+  addHoliday: (date: string) => void;
+  removeHoliday: (date: string) => void;
+  isHoliday: (date: Date) => boolean;
 }

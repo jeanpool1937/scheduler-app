@@ -3,34 +3,24 @@ import React, { useState } from 'react';
 import { useStore } from '../store/useStore';
 import { useArticleStore } from '../store/useArticleStore';
 import { useChangeoverStore } from '../store/useChangeoverStore';
-import { Plus, Trash2, Settings, Download, Database } from 'lucide-react';
+import { Settings, Download, Database, Upload } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
+import { HolidayConfig } from './HolidayConfig';
 
 export const SettingsPanel: React.FC = () => {
-    const { stoppageConfigs, addStoppageConfig, removeStoppageConfig, schedule, programStartDate } = useStore();
-    const { articles } = useArticleStore();
-    const { rules: changeovers } = useChangeoverStore();
-    const [newLabel, setNewLabel] = useState('');
-
-    const handleAdd = () => {
-        if (!newLabel.trim()) return;
-
-        const id = uuidv4();
-        addStoppageConfig({
-            id,
-            colId: `stop_${id.substr(0, 8)}`,
-            label: newLabel,
-            defaultDuration: 0
-        });
-        setNewLabel('');
-    };
+    const {
+        stoppageConfigs,
+        const { articles, setArticles } = useArticleStore();
+    const { rules: changeovers, setRules } = useChangeoverStore();
 
     const handleExportBackup = () => {
         const fullBackup = {
+            version: '1.0',
             timestamp: new Date().toISOString(),
             config: {
                 stoppageConfigs,
-                programStartDate
+                programStartDate,
+                columnLabels
             },
             schedule,
             database: {
@@ -50,77 +40,112 @@ export const SettingsPanel: React.FC = () => {
         URL.revokeObjectURL(url);
     };
 
+    const handleImportBackup = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const backup = JSON.parse(e.target?.result as string);
+
+                // Validate basic structure
+                if (!backup.version || !backup.config || !backup.schedule || !backup.database) {
+                    alert('❌ Archivo de respaldo inválido. Asegúrate de usar un archivo exportado desde esta aplicación.');
+                    return;
+                }
+
+                // Import configuration
+                if (backup.config.stoppageConfigs) {
+                    setStoppageConfigs(backup.config.stoppageConfigs);
+                }
+                if (backup.config.programStartDate) {
+                    setProgramStartDate(new Date(backup.config.programStartDate));
+                }
+                if (backup.config.columnLabels) {
+                    importColumnLabels(backup.config.columnLabels);
+                }
+
+                // Import schedule
+                if (backup.schedule) {
+                    setSchedule(backup.schedule);
+                }
+
+                // Import databases
+                if (backup.database.articles) {
+                    setArticles(backup.database.articles);
+                }
+                if (backup.database.changeovers) {
+                    setRules(backup.database.changeovers);
+                }
+
+                alert('✅ Datos importados correctamente. La aplicación se recargará.');
+
+                // Reload to ensure all components update
+                setTimeout(() => window.location.reload(), 500);
+
+            } catch (error) {
+                console.error('Error importing backup:', error);
+                alert('❌ Error al importar el archivo. Verifica que sea un archivo JSON válido.');
+            }
+        };
+
+        reader.readAsText(file);
+        event.target.value = ''; // Reset input
+    };
+
     return (
-        <div className="p-6 max-w-2xl mx-auto space-y-8">
-            {/* Stoppages Configuration */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-                <div className="flex items-center gap-2 mb-6 border-b pb-4">
-                    <Settings className="text-gray-500" />
-                    <h2 className="text-xl font-bold text-gray-800">Configuración de Paradas</h2>
-                </div>
+        <div className="h-full overflow-y-auto">
+            <div className="p-6 max-w-2xl mx-auto space-y-8">
 
-                <p className="text-gray-600 mb-4">
-                    Define las columnas de paradas que aparecerán en el programador (ej. Cambio de Medida, Mantenimiento).
-                </p>
 
-                <div className="flex gap-2 mb-6">
-                    <input
-                        type="text"
-                        value={newLabel}
-                        onChange={(e) => setNewLabel(e.target.value)}
-                        placeholder="Nombre de la Parada (ej. Cambio Utillaje)"
-                        className="flex-1 p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
-                        onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
-                    />
-                    <button
-                        onClick={handleAdd}
-                        className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition flex items-center gap-2"
-                    >
-                        <Plus size={18} /> Agregar
-                    </button>
-                </div>
+                {/* Backup & Data Management */}
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                    <div className="flex items-center gap-2 mb-6 border-b pb-4">
+                        <Database className="text-gray-500" />
+                        <h2 className="text-xl font-bold text-gray-800">Copia de Seguridad</h2>
+                    </div>
 
-                <div className="space-y-2">
-                    {stoppageConfigs.map(config => (
-                        <div key={config.id} className="flex justify-between items-center p-3 bg-gray-50 rounded border border-gray-200">
-                            <span className="font-medium text-gray-700">{config.label}</span>
+                    <div className="flex flex-col gap-4">
+                        {/* Export */}
+                        <div className="flex justify-between items-center">
+                            <div>
+                                <p className="font-medium text-gray-800">Descargar Copia Completa</p>
+                                <p className="text-sm text-gray-500">
+                                    Guarda un archivo JSON con toda la programación, configuración y bases de datos.
+                                </p>
+                            </div>
                             <button
-                                onClick={() => removeStoppageConfig(config.id)}
-                                className="text-red-500 hover:text-red-700 p-2 hover:bg-red-50 rounded-full transition"
-                                title="Eliminar columna"
+                                onClick={handleExportBackup}
+                                className="bg-gray-800 text-white px-4 py-2 rounded shadow hover:bg-gray-900 transition flex items-center gap-2"
                             >
-                                <Trash2 size={18} />
+                                <Download size={18} /> Exportar
                             </button>
                         </div>
-                    ))}
 
-                    {stoppageConfigs.length === 0 && (
-                        <p className="text-center text-gray-400 italic py-4">No hay columnas de parada configuradas.</p>
-                    )}
-                </div>
-            </div>
-
-            {/* Backup & Data Management */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-                <div className="flex items-center gap-2 mb-6 border-b pb-4">
-                    <Database className="text-gray-500" />
-                    <h2 className="text-xl font-bold text-gray-800">Copia de Seguridad</h2>
-                </div>
-
-                <div className="flex justify-between items-center">
-                    <div>
-                        <p className="font-medium text-gray-800">Descargar Copia Completa</p>
-                        <p className="text-sm text-gray-500">
-                            Guarda un archivo JSON con toda la programación, configuración y bases de datos actuales.
-                        </p>
+                        {/* Import */}
+                        <div className="flex justify-between items-center pt-4 border-t border-gray-200">
+                            <div>
+                                <p className="font-medium text-gray-800">Importar Copia Completa</p>
+                                <p className="text-sm text-gray-500">
+                                    Carga un archivo de respaldo para restaurar todos tus datos.
+                                </p>
+                            </div>
+                            <label className="bg-green-600 text-white px-4 py-2 rounded shadow hover:bg-green-700 transition flex items-center gap-2 cursor-pointer">
+                                <Upload size={18} /> Importar
+                                <input
+                                    type="file"
+                                    accept=".json"
+                                    onChange={handleImportBackup}
+                                    className="hidden"
+                                />
+                            </label>
+                        </div>
                     </div>
-                    <button
-                        onClick={handleExportBackup}
-                        className="bg-gray-800 text-white px-4 py-2 rounded shadow hover:bg-gray-900 transition flex items-center gap-2"
-                    >
-                        <Download size={18} /> Exportar Todo
-                    </button>
                 </div>
+
+                {/* Holidays Configuration */}
+                <HolidayConfig />
             </div>
         </div>
     );

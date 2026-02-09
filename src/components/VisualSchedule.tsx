@@ -3,14 +3,12 @@ import { useStore } from '../store/useStore';
 import { useArticleStore } from '../store/useArticleStore';
 import { format, addDays, startOfDay, endOfDay, differenceInMinutes, isAfter, isBefore } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Calendar, Printer } from 'lucide-react';
+import { Printer, Zap } from 'lucide-react';
 import type { ProductionScheduleItem } from '../types';
 
 interface DailyEvent {
     id: string; // Original ID or generated for split
-    originalItemId?: string;
-    type: 'production' | 'changeover' | 'maintenance' | 'adjustment' | 'quality_change' | 'stop_change';
-    label: string;
+    type: 'production' | 'changeover' | 'maintenance' | 'maintenance_hp' | 'adjustment' | 'quality_change' | 'stop_change' | 'ring_change' | 'channel_change';
     description: string;
     startTime: Date;
     endTime: Date;
@@ -30,10 +28,11 @@ interface DailySchedule {
 }
 
 export const VisualSchedule: React.FC = () => {
-    const { schedule, stoppageConfigs } = useStore();
+    const { schedule, isHoliday } = useStore();
     const { articles } = useArticleStore();
+    const [showPeakHoursOnly, setShowPeakHoursOnly] = React.useState(false);
 
-    // 1. Process Schedule into Daily Buckets
+    // 1. Process Schedule into Daily Buckets (Using Segments from Store)
     const dailySchedules = useMemo(() => {
         const daysMap = new Map<string, DailySchedule>();
 
@@ -53,239 +52,289 @@ export const VisualSchedule: React.FC = () => {
             return daysMap.get(dateKey)!;
         };
 
-        // Helper to add event
-        const addEvent = (start: Date, end: Date, originalItem: ProductionScheduleItem, type: DailyEvent['type'], label: string, color: string, tonnage: number = 0, customDescription?: string) => {
-            if (isAfter(start, end)) return; // Invalid
+        // Check if item overlaps with Peak Hours (Mon-Fri 18:30-20:30, excluding holidays)
+        const isPeakHourOverlap = (item: ProductionScheduleItem) => {
+            if (!item.startTime || !item.endTime) return false;
+            const start = new Date(item.startTime);
+            const end = new Date(item.endTime);
+            const currentCheck = new Date(start);
+            currentCheck.setHours(0, 0, 0, 0);
+            const lastDay = new Date(end);
+            lastDay.setHours(0, 0, 0, 0);
 
-            let currentStart = start;
-            while (currentStart < end) {
-                const dayBucket = getDayBucket(currentStart);
-                const dayEnd = endOfDay(currentStart);
-
-                // Determine actual end for this day
-                const actualEnd = isBefore(end, dayEnd) ? end : dayEnd;
-
-                // Duration for this slice
-                const duration = differenceInMinutes(actualEnd, currentStart);
-                if (duration <= 0) break;
-
-                const description = customDescription ||
-                    (type === 'production'
-                        ? `${articles.find(a => a.codigoProgramacion === originalItem.skuCode)?.descripcion || '---'}`
-                        : label);
-
-                dayBucket.events.push({
-                    id: `${originalItem.id}_${dayBucket.events.length}`,
-                    originalItemId: originalItem.id,
-                    type,
-                    label,
-                    description,
-                    startTime: currentStart,
-                    endTime: actualEnd,
-                    durationMinutes: duration,
-                    skuCode: originalItem.skuCode,
-                    tonnage: type === 'production' ? (tonnage * (duration / originalItem.productionTimeMinutes)) : 0, // Pro-rate tonnage if split? Or just 0 for non-prod
-                    color
-                });
-
-                // Update totals
-                if (type === 'production') {
-                    dayBucket.totalProductionMinutes += duration;
-                    // Pro-rate tonnage strictly for the day report? 
-                    // Use a simpler approach: if it's the main chunk, log it? 
-                    // Better: logic above pro-rates based on time fraction. 
-                    // But originalItem.quantity is total. 
-                    // tonnage arg passed is total. 
-                    if (originalItem.productionTimeMinutes > 0) {
-                        const timeFraction = duration / originalItem.productionTimeMinutes;
-                        dayBucket.totalTonnage += (originalItem.quantity * timeFraction);
-                    }
-                } else {
-                    dayBucket.totalStoppageMinutes += duration;
+            while (currentCheck <= lastDay) {
+                const dayOfWeek = currentCheck.getDay();
+                // Check if it's a weekday (Mon-Fri) AND not a holiday
+                if (dayOfWeek >= 1 && dayOfWeek <= 5 && !isHoliday(currentCheck)) {
+                    const peakStart = new Date(currentCheck);
+                    peakStart.setHours(18, 30, 0, 0);
+                    const peakEnd = new Date(currentCheck);
+                    peakEnd.setHours(20, 30, 0, 0);
+                    if (start < peakEnd && end > peakStart) return true;
                 }
-
-                dayBucket.balanceMinutes -= duration;
-
-                // Next iteration
-                currentStart = addDays(startOfDay(currentStart), 1);
+                currentCheck.setDate(currentCheck.getDate() + 1);
             }
+            return false;
         };
 
-        schedule.forEach(item => {
-            // Process sequence: 
-            // 1. Changeover
-            // 2. Quality Change
-            // 3. Adjustment
-            // 4. Stoppages (We need to decide WHERE they occur. Ideally before production? Or interleaved? 
-            //    The current logic sums them up. Let's assume they happen BEFORE production for simplicity or sequentially based on logic.
-            //    Standard: Changeover -> Quality -> Adjustment -> Production. 
-            //    Stoppages: 'Mantenimiento' might be independent. 
-            //    For now, we sequence them linearly starting from item.startTime which is calculated in store as "Start of the whole block".
-            //    Wait, item.startTime in store INCLUDES changeovers. 
-            //    So we need to reconstruct the internal timeline of the item.
+        const filteredSchedule = showPeakHoursOnly
+            ? schedule.filter(isPeakHourOverlap)
+            : schedule;
 
-            // Re-simulation of internal structure:
-            let timer = new Date(item.startTime);
+        filteredSchedule.forEach(item => {
+            if (item.segments) {
+                item.segments.forEach(seg => {
+                    const start = new Date(seg.start);
+                    const end = new Date(seg.end);
 
-            // 1. Changeover
-            if (item.changeoverMinutes && item.changeoverMinutes > 0) {
-                const end = new Date(timer.getTime() + item.changeoverMinutes * 60000);
-                addEvent(timer, end, item, 'changeover', 'Cambio de Medida', 'bg-red-100 text-red-800');
-                timer = end;
-            }
+                    if (isAfter(start, end)) return;
 
-            // 2. Quality Change
-            if (item.qualityChangeMinutes && item.qualityChangeMinutes > 0) {
-                const end = new Date(timer.getTime() + item.qualityChangeMinutes * 60000);
-                addEvent(timer, end, item, 'quality_change', 'Cambio Calidad', 'bg-pink-100 text-pink-800');
-                timer = end;
-            }
+                    // Handle segments spanning multiple days? 
+                    // simulateSchedule handles logic, but segments might cross midnight?
+                    // Usually we want to visualize them per day.
+                    // If a segment crosses midnight, we split it here for VISUALIZATION only.
 
-            // 3. Stop Change (Cambio de Tope)
-            if (item.stopChangeMinutes && item.stopChangeMinutes > 0) {
-                const end = new Date(timer.getTime() + item.stopChangeMinutes * 60000);
-                addEvent(timer, end, item, 'stop_change', 'Cambio de Tope', 'bg-teal-100 text-teal-800');
-                timer = end;
-            }
+                    let currentStart = start;
+                    while (currentStart < end) {
+                        const dayBucket = getDayBucket(currentStart);
+                        const dayEnd = endOfDay(currentStart);
+                        const actualEnd = isBefore(end, dayEnd) ? end : dayEnd;
+                        const duration = differenceInMinutes(actualEnd, currentStart);
 
-            // 4. Adjustment
-            if (item.adjustmentMinutes && item.adjustmentMinutes > 0) {
-                const end = new Date(timer.getTime() + item.adjustmentMinutes * 60000);
-                addEvent(timer, end, item, 'adjustment', 'Acierto y Calib.', 'bg-yellow-100 text-yellow-800');
-                timer = end;
-            }
+                        if (duration <= 0) break;
 
-            // 4. Stoppages (Dynamic)
-            // We don't know the order of multiple stoppages, just sum. Let's sequence them.
-            if (item.stoppages) {
-                Object.entries(item.stoppages).forEach(([stopId, duration]) => {
-                    if (duration > 0) {
-                        const config = stoppageConfigs.find(c => c.id === stopId);
-                        const end = new Date(timer.getTime() + duration * 60000);
-                        addEvent(timer, end, item, 'maintenance', config?.label || 'Parada', 'bg-orange-100 text-orange-800');
-                        timer = end;
+                        // Add to bucket
+                        dayBucket.events.push({
+                            id: `${item.id}_${dayBucket.events.length}`, // visual ID
+                            originalItemId: item.id,
+                            type: seg.type as any, // Cast to match
+                            label: seg.label,
+                            description: seg.description,
+                            startTime: currentStart,
+                            endTime: actualEnd,
+                            durationMinutes: duration,
+                            skuCode: item.skuCode,
+                            // Tonnage only applies to production
+                            tonnage: seg.type === 'production' && item.quantity
+                                ? (item.quantity * (duration / item.productionTimeMinutes))
+                                : 0,
+                            color: seg.color
+                        });
+
+                        // Update Totals
+                        if (seg.type === 'production') {
+                            dayBucket.totalProductionMinutes += duration;
+                            if (item.productionTimeMinutes > 0 && item.quantity) {
+                                dayBucket.totalTonnage += (item.quantity * (duration / item.productionTimeMinutes));
+                            }
+                        } else {
+                            dayBucket.totalStoppageMinutes += duration;
+                        }
+                        dayBucket.balanceMinutes -= duration;
+
+                        currentStart = addDays(startOfDay(currentStart), 1);
                     }
                 });
             }
+        });
 
-            // 5. Production
-            if (item.productionTimeMinutes > 0) {
-                const end = new Date(timer.getTime() + item.productionTimeMinutes * 60000);
-                const sku = articles.find(a => a.codigoProgramacion === item.skuCode);
-                addEvent(timer, end, item, 'production', item.skuCode, 'bg-blue-50 text-blue-900', item.quantity,
-                    `${sku?.descripcion} (${sku?.calidadPalanquilla})`);
-                timer = end;
-            }
-
-            // Theoretical end should match item.endTime approx (give or take floating point diffs)
+        // Sort events within each day by start time
+        daysMap.forEach(day => {
+            day.events.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
         });
 
         // Convert Map to Array and Sort
         return Array.from(daysMap.values()).sort((a, b) => a.date.getTime() - b.date.getTime());
 
-    }, [schedule, articles, stoppageConfigs]);
+    }, [schedule, articles, showPeakHoursOnly]);
 
     const handlePrint = () => {
         window.print();
     };
 
+    // Flatten functionality for the continuous table is handled via nested mapping in the render
+
+    // Calculate Monthly Totals for the new compact Header
+    const monthlyTotals = dailySchedules.reduce((acc, day) => ({
+        tonnage: acc.tonnage + day.totalTonnage,
+        productionMinutes: acc.productionMinutes + day.totalProductionMinutes,
+        stoppageMinutes: acc.stoppageMinutes + day.totalStoppageMinutes
+    }), { tonnage: 0, productionMinutes: 0, stoppageMinutes: 0 });
+
     return (
-        <div className="h-full flex flex-col bg-gray-50 overflow-hidden">
-            <div className="flex justify-between items-center p-4 bg-white border-b border-gray-200">
-                <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-                    <Calendar className="text-blue-600" />
-                    Programación Visual Diaria
-                </h2>
-                <button
-                    onClick={handlePrint}
-                    className="flex items-center gap-2 bg-gray-100 text-gray-700 px-4 py-2 rounded hover:bg-gray-200 transition print:hidden"
-                >
-                    <Printer size={18} /> Imprimir
-                </button>
-            </div>
+        <div className="bg-white h-full overflow-y-auto relative p-4 print:p-0 font-sans text-gray-900 print:text-black print:overflow-visible print:h-auto print:block">
+            {/* INJECTED PRINT STYLES */}
+            <style>{`
+                @media print {
+                    @page { margin: 1cm; size: A4 portrait; }
+                    html, body, #root, .app-container {
+                        height: auto !important;
+                        min-height: 100% !important;
+                        overflow: visible !important;
+                        display: block !important;
+                        background: white !important;
+                    }
+                    /* Reset any potential flex/grid constraints in parents */
+                    div {
+                        display: block !important;
+                        height: auto !important;
+                        position: static !important;
+                        overflow: visible !important;
+                    }
+                    
+                    /* Table Mechanics */
+                    table {
+                        width: 100% !important;
+                        table-layout: fixed !important;
+                        border-collapse: collapse !important;
+                    }
+                    thead { display: table-header-group !important; }
+                    tfoot { display: table-footer-group !important; }
+                    tr { page-break-inside: avoid !important; break-inside: avoid !important; }
+                    td, th { page-break-inside: avoid !important; break-inside: avoid !important; }
+                    
+                    /* Hide UI */
+                    button, nav, header:not(.print-header) { display: none !important; }
+                }
+            `}</style>
 
-            <div className="flex-1 overflow-auto p-4 space-y-6 print:overflow-visible">
-                {dailySchedules.map((day) => (
-                    <div key={day.date.toISOString()} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden break-inside-avoid">
-                        {/* Daily Header */}
-                        <div className="bg-gray-50 px-6 py-3 border-b border-gray-200 flex flex-wrap justify-between items-center">
-                            <div className="flex items-center gap-3">
-                                <h3 className="text-lg font-bold text-gray-800 capitalize">
-                                    {format(day.date, 'EEEE d, MMMM yyyy', { locale: es })}
-                                </h3>
-                                <span className="text-sm px-2 py-0.5 bg-blue-100 text-blue-800 rounded-full font-medium">
-                                    {day.events.length} Eventos
-                                </span>
-                            </div>
+            {/* Ultra Compact Global Header */}
+            <header className="print-header mb-4 border-b-2 border-black pb-2 flex justify-between items-end print:mb-2 bg-white block">
+                <div className="flex gap-8 items-end">
+                    <div>
+                        <h1 className="text-2xl font-black uppercase leading-none">Programación Mensual</h1>
+                        <p className="text-xs font-bold text-gray-500">Total: {monthlyTotals.tonnage.toFixed(0)} Ton | Prod: {(monthlyTotals.productionMinutes / 60).toFixed(1)}h | Paradas: {(monthlyTotals.stoppageMinutes / 60).toFixed(1)}h</p>
+                    </div>
+                </div>
 
-                            <div className="flex gap-6 text-sm">
-                                <div className="flex flex-col items-end">
-                                    <span className="text-gray-500">Producción Total</span>
-                                    <span className="font-bold text-gray-800">{day.totalTonnage.toFixed(0)} Ton</span>
-                                </div>
-                                <div className="flex flex-col items-end">
-                                    <span className="text-gray-500">Tiempo Prod.</span>
-                                    <span className="font-bold text-green-700">{(day.totalProductionMinutes / 60).toFixed(1)} hrs</span>
-                                </div>
-                                <div className="flex flex-col items-end">
-                                    <span className="text-gray-500">Tiempo Paradas</span>
-                                    <span className="font-bold text-red-600">{(day.totalStoppageMinutes / 60).toFixed(1)} hrs</span>
-                                </div>
-                                <div className="flex flex-col items-end border-l pl-6 border-gray-300">
-                                    <span className="text-gray-500">Balance (24h)</span>
-                                    <span className={`font-bold ${day.balanceMinutes < 0 ? 'text-red-600' : 'text-gray-800'}`}>
-                                        {(day.balanceMinutes / 60).toFixed(1)} hrs Libres
-                                    </span>
-                                </div>
-                            </div>
-                        </div>
+                <div className="flex gap-4 items-center print:hidden">
+                    <button
+                        onClick={handlePrint}
+                        className="flex items-center gap-2 bg-black text-white px-4 py-2 rounded text-xs font-bold hover:bg-gray-800 transition shadow"
+                    >
+                        <Printer size={16} /> IMPRIMIR (A4 COMPACTO)
+                    </button>
+                    <button
+                        onClick={() => setShowPeakHoursOnly(!showPeakHoursOnly)}
+                        className={`flex items-center gap-2 px-4 py-2 rounded text-xs font-bold transition shadow ${showPeakHoursOnly
+                            ? 'bg-purple-100 text-purple-700 border border-purple-300 ring-2 ring-purple-200'
+                            : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                            }`}
+                        title="Mostrar solo items que intersectan Lunes-Viernes 18:30-20:30"
+                    >
+                        <Zap size={16} className={showPeakHoursOnly ? 'fill-current' : ''} />
+                        HORA PUNTA
+                    </button>
+                </div>
+                <div className="text-right hidden print:block">
+                    <p className="text-[10px] font-bold uppercase text-gray-500">Scheduler v2</p>
+                    <p className="text-[8px] text-gray-400 font-mono">{format(new Date(), 'dd/MM/yy HH:mm')}</p>
+                </div>
+            </header>
 
-                        {/* Events Table */}
-                        <table className="w-full text-sm text-left">
-                            <thead className="bg-white text-gray-500 border-b border-gray-100">
-                                <tr>
-                                    <th className="px-6 py-2 font-medium w-32">Horario</th>
-                                    <th className="px-6 py-2 font-medium w-24">Duración</th>
-                                    <th className="px-6 py-2 font-medium w-40">Tipo/Código</th>
-                                    <th className="px-6 py-2 font-medium">Descripción / Actividad</th>
-                                    <th className="px-6 py-2 font-medium text-right">Toneladas</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-50">
-                                {day.events.map((event) => (
-                                    <tr key={event.id} className="hover:bg-gray-50">
-                                        <td className="px-6 py-3 font-mono text-gray-600">
-                                            {format(event.startTime, 'HH:mm')} - {format(event.endTime, 'HH:mm')}
-                                        </td>
-                                        <td className="px-6 py-3 text-gray-500">
-                                            {event.durationMinutes.toFixed(0)} min
-                                        </td>
-                                        <td className="px-6 py-3">
-                                            <span className={`px-2 py-1 rounded text-xs font-bold ${event.color}`}>
-                                                {event.label}
+            {/* CONTINUOUS COMPACT TABLE */}
+            <div className="print:overflow-visible">
+                <table className="w-full text-[10px] leading-tight border-collapse print:text-[9px]">
+                    <thead className="text-white print:text-black">
+                        <tr>
+                            <th className="sticky top-0 z-20 bg-black print:bg-gray-200 p-1 text-left font-bold uppercase w-20 border border-gray-600 print:border-gray-400 shadow-sm">Horario</th>
+                            <th className="sticky top-0 z-20 bg-black print:bg-gray-200 p-1 text-center font-bold uppercase w-12 border border-gray-600 print:border-gray-400 shadow-sm">Min</th>
+                            <th className="sticky top-0 z-20 bg-black print:bg-gray-200 p-1 text-left font-bold uppercase w-24 border border-gray-600 print:border-gray-400 shadow-sm">SKU / Tipo</th>
+                            <th className="sticky top-0 z-20 bg-black print:bg-gray-200 p-1 text-left font-bold uppercase border border-gray-600 print:border-gray-400 shadow-sm">Actividad / Descripción</th>
+                            <th className="sticky top-0 z-20 bg-black print:bg-gray-200 p-1 text-right font-bold uppercase w-16 border border-gray-600 print:border-gray-400 shadow-sm">Ton</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {dailySchedules.map((day) => (
+                            <React.Fragment key={day.date.toISOString()}>
+                                {/* DAY HEADER ROW */}
+                                <tr className="bg-gray-200 print:bg-gray-300 border-t-2 border-black break-after-avoid">
+                                    <td colSpan={5} className="p-1 border border-gray-400">
+                                        <div className="flex justify-between items-baseline px-1">
+                                            <span className="font-black text-sm uppercase print:text-xs">
+                                                {format(day.date, 'EEEE d MMMM', { locale: es })}
                                             </span>
-                                        </td>
-                                        <td className="px-6 py-3 text-gray-800 font-medium">
-                                            {event.description}
-                                        </td>
-                                        <td className="px-6 py-3 text-right font-mono text-gray-700">
-                                            {event.type === 'production' && event.tonnage
-                                                ? event.tonnage.toFixed(1)
-                                                : '-'}
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                ))}
+                                            <span className="font-mono text-[9px] font-bold">
+                                                P: {(day.totalProductionMinutes / 60).toFixed(1)}h | S: {(day.totalStoppageMinutes / 60).toFixed(1)}h | {day.totalTonnage.toFixed(0)} T
+                                            </span>
+                                        </div>
+                                    </td>
+                                </tr>
 
-                {dailySchedules.length === 0 && (
-                    <div className="flex flex-col items-center justify-center h-64 text-gray-400">
-                        <Calendar size={48} className="mb-2 opacity-50" />
-                        <p>No hay programación generada.</p>
-                    </div>
-                )}
+                                {/* EVENT ROWS */}
+                                {day.events.map((event) => {
+                                    // Robust check for Peak Hour
+                                    const labelUpper = event.label.toUpperCase();
+                                    const descUpper = event.description.toUpperCase();
+                                    const isPeakHour = labelUpper.includes('HORA PUNTA') || descUpper.includes('HORA PUNTA') || event.type === 'maintenance_hp';
+
+                                    const isChangeover = event.type === 'changeover';
+                                    const isStop = event.type === 'maintenance' || event.type === 'maintenance_hp' || event.type === 'stop_change' || event.type === 'quality_change' || event.type === 'ring_change' || event.type === 'channel_change';
+
+                                    // Row Styling Logic
+                                    let rowClass = "border-b border-gray-200 print:border-gray-300";
+                                    if (isPeakHour) rowClass += " bg-red-50 text-red-900 font-bold print:bg-gray-50";
+                                    else if (isChangeover) rowClass += " bg-orange-50 print:bg-white";
+                                    else if (isStop) rowClass += " bg-yellow-50 print:bg-white";
+
+                                    return (
+                                        <tr key={event.id} className={rowClass}>
+                                            {/* Time */}
+                                            <td className="p-0.5 border-r border-gray-200 print:border-gray-300 font-mono whitespace-nowrap">
+                                                {format(event.startTime, 'HH:mm')} - {format(event.endTime, 'HH:mm')}
+                                            </td>
+
+                                            {/* Duration */}
+                                            <td className="p-0.5 border-r border-gray-200 print:border-gray-300 text-center font-mono">
+                                                {event.durationMinutes.toFixed(0)}
+                                            </td>
+
+                                            {/* SKU / Badge */}
+                                            <td className="p-0.5 border-r border-gray-200 print:border-gray-300">
+                                                <div className="flex items-center gap-1">
+                                                    {event.skuCode ? (
+                                                        <span className="font-black font-mono text-[10px] bg-gray-100 px-1 rounded print:bg-transparent print:border print:border-gray-400">
+                                                            {event.skuCode}
+                                                        </span>
+                                                    ) : (
+                                                        <span className={`px-1 rounded text-[8px] font-bold uppercase tracking-wider print:border print:border-black print:bg-transparent ${event.color}`}>
+                                                            {event.label.substring(0, 10)}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </td>
+
+                                            {/* Description */}
+                                            <td className="p-0.5 border-r border-gray-200 print:border-gray-300">
+                                                <span className={`font-semibold ${isPeakHour ? 'text-red-700' : 'text-gray-900'}`}>
+                                                    {event.type === 'production' && event.skuCode
+                                                        ? (articles.find(a => a.codigoProgramacion === event.skuCode)?.descripcion || event.description)
+                                                        : event.description
+                                                    }
+                                                </span>
+                                            </td>
+
+                                            {/* Tonnage */}
+                                            <td className="p-0.5 text-right font-mono font-bold">
+                                                {event.type === 'production' && event.tonnage && event.tonnage > 0
+                                                    ? event.tonnage.toFixed(1)
+                                                    : ''}
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </React.Fragment>
+                        ))}
+
+                        {dailySchedules.length === 0 && (
+                            <tr>
+                                <td colSpan={5} className="p-8 text-center text-gray-400 italic">
+                                    No hay programación generada para este rango.
+                                </td>
+                            </tr>
+                        )}
+                    </tbody>
+                </table>
             </div>
         </div>
     );
