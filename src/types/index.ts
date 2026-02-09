@@ -18,6 +18,24 @@ export interface StoppageConfig {
   colId: string; // For AG Grid column mapping
 }
 
+export type SegmentType =
+  | 'production'
+  | 'changeover'        // R1: Cambio de medida (duración de matriz)
+  | 'adjustment'        // R4: Acierto/Calibración (siempre con cambio de medida)
+  | 'quality_change'    // R2: Cambio de calidad (60 min)
+  | 'stop_change'       // R3: Cambio de tope (10 min)
+  | 'ring_change'       // R5: Cambio de anillo (18:30 diario)
+  | 'channel_change'    // R6: Cambio de canal (06:30 diario)
+  | 'maintenance_hp'    // R7: Hora punta (18:30-20:30 L-V)
+  | 'forced_stop';      // Paradas manuales
+
+export interface ManualStop {
+  id: string;
+  start: Date;
+  durationMinutes: number;
+  label: string;
+}
+
 export interface ProductionScheduleItem {
   id: string;
   sequenceOrder: number;
@@ -44,7 +62,7 @@ export interface ProductionScheduleItem {
   computedStart?: Date;
   computedEnd?: Date;
   segments?: {
-    type: 'production' | 'setup' | 'maintenance_hp' | 'forced_stop';
+    type: SegmentType;
     start: Date;
     end: Date;
     durationMinutes: number;
@@ -64,13 +82,22 @@ export interface AppState {
 
   // Actions
   addScheduleItem: (item: Omit<ProductionScheduleItem, 'id' | 'sequenceOrder'>) => void;
+  insertScheduleItem: (index: number, item: ProductionScheduleItem) => void;
+  addScheduleItems: (items: ProductionScheduleItem[]) => void;
   updateScheduleItem: (id: string, updates: Partial<ProductionScheduleItem>) => void;
   deleteScheduleItem: (id: string) => void;
+  clearSchedule: () => void;
   reorderSchedule: (newOrder: ProductionScheduleItem[]) => void;
   recalculateSchedule: () => void;
   setProgramStartDate: (date: Date) => void;
   undo: () => void;
   canUndo: () => boolean;
+  _saveSnapshot: () => void;
+
+  // Stoppage Config
+  addStoppageConfig: (config: StoppageConfig) => void;
+  removeStoppageConfig: (id: string) => void;
+
   // Column Labels
   setColumnLabel: (field: string, label: string) => void;
 
@@ -83,4 +110,10 @@ export interface AppState {
   addHoliday: (date: string) => void;
   removeHoliday: (date: string) => void;
   isHoliday: (date: Date) => boolean;
+
+  // Manual Stops
+  manualStops: ManualStop[];
+  addManualStop: (stop: ManualStop) => void;
+  updateManualStop: (id: string, stop: Partial<ManualStop>) => void;
+  deleteManualStop: (id: string) => void;
 }

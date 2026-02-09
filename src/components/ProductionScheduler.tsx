@@ -1,5 +1,5 @@
 
-import React, { useCallback, useMemo, useState, useEffect } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import type { ColDef, RowDragEndEvent, ValueSetterParams, GridReadyEvent } from 'ag-grid-community';
 import { useStore } from '../store/useStore';
@@ -7,15 +7,17 @@ import { useArticleStore } from '../store/useArticleStore';
 import type { ProductionScheduleItem } from '../types';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Plus, Trash2, CalendarClock, Undo2 } from 'lucide-react';
+import { Plus, Trash2, CalendarClock, Undo2, Save, RotateCcw } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
+
+// Clave para guardar el estado de columnas en localStorage
+const COLUMN_STATE_KEY = 'scheduler-column-state';
 
 export const ProductionScheduler: React.FC = () => {
     const {
         schedule,
         stoppageConfigs,
-        addScheduleItem,
-        insertScheduleItem, // Import insert action
+        insertScheduleItem,
         addScheduleItems,
         updateScheduleItem,
         deleteScheduleItem,
@@ -33,6 +35,9 @@ export const ProductionScheduler: React.FC = () => {
 
     // Context Menu State
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; rowIndex: number; rowId: string } | null>(null);
+
+    // Estado para feedback visual al guardar distribución
+    const [layoutSaved, setLayoutSaved] = useState(false);
 
     // Close menu on global click
     React.useEffect(() => {
@@ -105,7 +110,7 @@ export const ProductionScheduler: React.FC = () => {
     const [editingValue, setEditingValue] = useState('');
 
     // Handler for grid ready - attach double-click listener to headers
-    const onGridReady = useCallback((_event: GridReadyEvent) => {
+    const onGridReady = useCallback((event: GridReadyEvent) => {
         const gridDiv = document.querySelector('.ag-theme-quartz');
         if (!gridDiv) return;
 
@@ -121,6 +126,17 @@ export const ProductionScheduler: React.FC = () => {
                 }
             }
         });
+
+        // Restaurar estado de columnas guardado en localStorage
+        try {
+            const savedState = localStorage.getItem(COLUMN_STATE_KEY);
+            if (savedState) {
+                const columnState = JSON.parse(savedState);
+                event.api.applyColumnState({ state: columnState, applyOrder: true });
+            }
+        } catch (e) {
+            console.warn('No se pudo restaurar el estado de columnas:', e);
+        }
     }, [columnLabels]);
 
     // Save edited header
@@ -131,6 +147,27 @@ export const ProductionScheduler: React.FC = () => {
         setEditingHeader(null);
         setEditingValue('');
     };
+
+    // Guardar distribución de columnas en localStorage
+    const handleSaveColumnLayout = useCallback(() => {
+        const api = gridRef.current?.api;
+        if (!api) return;
+
+        const columnState = api.getColumnState();
+        localStorage.setItem(COLUMN_STATE_KEY, JSON.stringify(columnState));
+        setLayoutSaved(true);
+        setTimeout(() => setLayoutSaved(false), 2000);
+    }, []);
+
+    // Restaurar distribución de columnas por defecto
+    const handleResetColumnLayout = useCallback(() => {
+        const api = gridRef.current?.api;
+        if (!api) return;
+
+        localStorage.removeItem(COLUMN_STATE_KEY);
+        api.resetColumnState();
+        setLayoutSaved(false);
+    }, []);
 
     // Calculate program end date from last schedule item
     const programEndDate = useMemo(() => {
@@ -210,13 +247,17 @@ export const ProductionScheduler: React.FC = () => {
                 return sum + manualChannelChange + autoChannelChange;
             }, 0),
             adjustmentMinutes: schedule.reduce((sum, item) => sum + (item.adjustmentMinutes || 0), 0),
+            // Total de Mantenimiento (maintenance_hp segments)
+            maintenanceMinutes: schedule.reduce((sum, item) => {
+                return sum + (item.segments || [])
+                    .filter(seg => seg.type === 'maintenance_hp')
+                    .reduce((segSum, seg) => segSum + seg.durationMinutes, 0);
+            }, 0),
             stoppages: {},
             _breakdowns: {
                 changeoverMinutes: getBreakdown('changeoverMinutes'),
                 qualityChangeMinutes: getBreakdown('qualityChangeMinutes'),
                 stopChangeMinutes: getBreakdown('stopChangeMinutes'),
-                // For Ring and Channel, we need to combine manual and auto logic for breakdown
-                // This is slightly more complex, so let's do a custom loop for these two mixed types
                 ringChangeMinutes: (() => {
                     const breakdown: Record<string, number> = {};
                     schedule.forEach(item => {
@@ -237,7 +278,16 @@ export const ProductionScheduler: React.FC = () => {
                     });
                     return Object.entries(breakdown).sort(([, a], [, b]) => b - a).map(([s, m]) => `${s}: ${Math.round(m)} min`).join('\n');
                 })(),
-                adjustmentMinutes: getBreakdown('adjustmentMinutes')
+                adjustmentMinutes: getBreakdown('adjustmentMinutes'),
+                // Breakdown de Mantenimiento por SKU
+                maintenanceMinutes: (() => {
+                    const breakdown: Record<string, number> = {};
+                    schedule.forEach(item => {
+                        const mins = (item.segments || []).filter(s => s.type === 'maintenance_hp').reduce((s, x) => s + x.durationMinutes, 0);
+                        if (mins > 0 && item.skuCode) breakdown[item.skuCode] = (breakdown[item.skuCode] || 0) + mins;
+                    });
+                    return Object.entries(breakdown).sort(([, a], [, b]) => b - a).map(([s, m]) => `${s}: ${Math.round(m)} min`).join('\n');
+                })()
             }
         };
 
@@ -386,8 +436,17 @@ export const ProductionScheduler: React.FC = () => {
             width: 100,
             wrapHeaderText: true,
             autoHeaderHeight: true,
-            valueGetter: (params) => params.data?.ringChangeMinutes ? `${Math.round(params.data.ringChangeMinutes)} min` : '-',
-            cellStyle: (params) => params.data?.ringChangeMinutes ? { color: '#7c3aed', fontWeight: 'bold' } : undefined,
+            valueGetter: (params) => {
+                const manual = params.data?.ringChangeMinutes || 0;
+                const auto = (params.data?.segments || []).filter((s: any) => s.type === 'ring_change').reduce((sum: number, s: any) => sum + s.durationMinutes, 0);
+                const total = manual + auto;
+                return total > 0 ? `${Math.round(total)} min` : '-';
+            },
+            cellStyle: (params) => {
+                const manual = params.data?.ringChangeMinutes || 0;
+                const auto = (params.data?.segments || []).filter((s: any) => s.type === 'ring_change').reduce((sum: number, s: any) => sum + s.durationMinutes, 0);
+                return (manual + auto) > 0 ? { color: '#7c3aed', fontWeight: 'bold' } : undefined;
+            },
             cellRenderer: totalTooltipRenderer
         });
 
@@ -398,8 +457,17 @@ export const ProductionScheduler: React.FC = () => {
             width: 100,
             wrapHeaderText: true,
             autoHeaderHeight: true,
-            valueGetter: (params) => params.data?.channelChangeMinutes ? `${Math.round(params.data.channelChangeMinutes)} min` : '-',
-            cellStyle: (params) => params.data?.channelChangeMinutes ? { color: '#ea580c', fontWeight: 'bold' } : undefined, // orange-600
+            valueGetter: (params) => {
+                const manual = params.data?.channelChangeMinutes || 0;
+                const auto = (params.data?.segments || []).filter((s: any) => s.type === 'channel_change').reduce((sum: number, s: any) => sum + s.durationMinutes, 0);
+                const total = manual + auto;
+                return total > 0 ? `${Math.round(total)} min` : '-';
+            },
+            cellStyle: (params) => {
+                const manual = params.data?.channelChangeMinutes || 0;
+                const auto = (params.data?.segments || []).filter((s: any) => s.type === 'channel_change').reduce((sum: number, s: any) => sum + s.durationMinutes, 0);
+                return (manual + auto) > 0 ? { color: '#ea580c', fontWeight: 'bold' } : undefined;
+            },
             cellRenderer: totalTooltipRenderer
         });
 
@@ -468,73 +536,28 @@ export const ProductionScheduler: React.FC = () => {
             cellStyle: { fontWeight: 'bold', color: '#1e3a8a' } // Blue text
         });
 
-        // 3.1 Peak Hour Alert Column
+        // 3.1 Mantenimiento Column (antes "Hora Punta") - muestra duración real de segmentos maintenance_hp
         cols.push({
-            headerName: 'Hora Punta',
-            width: 100,
+            colId: 'maintenanceMinutes',
+            headerName: getHeader('maintenanceMinutes', 'Mantenimiento'),
+            width: 120,
+            wrapHeaderText: true,
+            autoHeaderHeight: true,
             valueGetter: (params) => {
-                if (!params.data?.startTime || !params.data?.endTime) return 0;
-
-                const start = new Date(params.data.startTime);
-                const end = new Date(params.data.endTime);
-
-                // Check all days this item spans
-                let current = new Date(start);
-                current.setHours(0, 0, 0, 0);
-
-                let totalOverlap = 0;
-
-                while (current < end) {
-                    const peakStart = new Date(current);
-                    peakStart.setHours(18, 30, 0, 0);
-                    const peakEnd = new Date(current);
-                    peakEnd.setHours(20, 30, 0, 0);
-
-                    const overlapStart = start > peakStart ? start : peakStart;
-                    const overlapEnd = end < peakEnd ? end : peakEnd;
-
-                    const dayOfWeek = current.getDay();
-                    if (dayOfWeek !== 0 && dayOfWeek !== 6 && overlapStart < overlapEnd) {
-                        totalOverlap += (overlapEnd.getTime() - overlapStart.getTime()) / 60000;
-                    }
-
-                    current.setDate(current.getDate() + 1);
-                }
-
-                return totalOverlap > 0 ? Math.round(totalOverlap) : 0;
-            },
-            valueFormatter: (params) => {
-                if (params.value <= 0) return '-';
-
-                // Check if this overlap is covered by a Maintenance segment
                 const segments = params.data?.segments || [];
-                const hasMaintenance = segments.some((s: any) =>
-                    (s.type === 'maintenance_hp' || s.type === 'forced_stop' || s.type === 'setup') &&
-                    // Simple check: does this segment exist? 
-                    // Ideally we check if it overlaps the peak hour.
-                    // For now, if the item HAS a generated maintenance segment, it's likely for this.
-                    // A stricter check would be better but requires re-calculating peak times here.
-                    // Let's assume yes.
-                    true
-                );
-
-                return hasMaintenance
-                    ? `${params.value} min (OK)`
-                    : `${params.value} min`;
+                const maintenanceMinutes = segments
+                    .filter((s: any) => s.type === 'maintenance_hp')
+                    .reduce((sum: number, s: any) => sum + s.durationMinutes, 0);
+                return maintenanceMinutes > 0 ? `${Math.round(maintenanceMinutes)} min` : '-';
             },
             cellStyle: (params) => {
                 const segments = params.data?.segments || [];
-                const hasMaintenance = segments.some((s: any) =>
-                    (s.type === 'maintenance_hp' || s.type === 'forced_stop' || s.type === 'setup')
-                );
-
-                if (params.value > 0) {
-                    return hasMaintenance
-                        ? { color: '#15803d', fontWeight: 'bold' } // Green (Good)
-                        : { color: '#dc2626', fontWeight: 'bold' }; // Red (Bad - should be impossible with new logic)
-                }
-                return undefined;
-            }
+                const maintenanceMinutes = segments
+                    .filter((s: any) => s.type === 'maintenance_hp')
+                    .reduce((sum: number, s: any) => sum + s.durationMinutes, 0);
+                return maintenanceMinutes > 0 ? { color: '#b91c1c', fontWeight: 'bold' } : undefined;
+            },
+            cellRenderer: totalTooltipRenderer
         });
 
         // 4. Delete Action - REMOVED (now in Context Menu)
@@ -774,15 +797,18 @@ export const ProductionScheduler: React.FC = () => {
                                                 (item.channelChangeMinutes || 0) +
                                                 (item.adjustmentMinutes || 0);
 
-                                            // Automatic stoppages from segments
+                                            // Automatic stoppages from segments (ring, channel, maintenance_hp)
                                             const autoRingChange = (item.segments || [])
                                                 .filter(seg => seg.type === 'ring_change')
                                                 .reduce((segSum, seg) => segSum + seg.durationMinutes, 0);
                                             const autoChannelChange = (item.segments || [])
                                                 .filter(seg => seg.type === 'channel_change')
                                                 .reduce((segSum, seg) => segSum + seg.durationMinutes, 0);
+                                            const autoMaintenance = (item.segments || [])
+                                                .filter(seg => seg.type === 'maintenance_hp')
+                                                .reduce((segSum, seg) => segSum + seg.durationMinutes, 0);
 
-                                            return acc + manualStoppages + autoRingChange + autoChannelChange;
+                                            return acc + manualStoppages + autoRingChange + autoChannelChange + autoMaintenance;
                                         }, 0) +
                                         schedule.reduce((acc, item) => acc + Object.values(item.stoppages || {}).reduce((s, v) => s + v, 0), 0)
                                     ) / 60).toFixed(1)} h
@@ -800,6 +826,26 @@ export const ProductionScheduler: React.FC = () => {
                     <span className="text-xs text-green-600 flex items-center px-2 bg-green-50 rounded border border-green-100">
                         ✓ Guardado automático
                     </span>
+
+                    {/* Guardar/Restaurar distribución de columnas */}
+                    <button
+                        onClick={handleSaveColumnLayout}
+                        className={`flex items-center gap-1 px-3 py-2 rounded shadow-sm transition text-sm ${layoutSaved
+                                ? 'bg-green-100 text-green-700 border border-green-300'
+                                : 'bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100'
+                            }`}
+                        title="Guardar la distribución actual de columnas (anchos, orden)"
+                    >
+                        <Save size={16} />
+                        {layoutSaved ? '¡Guardado!' : 'Guardar Distribución'}
+                    </button>
+                    <button
+                        onClick={handleResetColumnLayout}
+                        className="flex items-center gap-1 bg-gray-50 text-gray-600 border border-gray-200 px-3 py-2 rounded shadow-sm hover:bg-gray-100 transition text-sm"
+                        title="Restaurar distribución de columnas por defecto"
+                    >
+                        <RotateCcw size={16} />
+                    </button>
 
                     {/* Undo Button */}
                     <button

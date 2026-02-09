@@ -33,7 +33,7 @@ function App() {
             : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
             }`}
         >
-          <LayoutDashboard size={18} /> Programación
+          <LayoutDashboard size={18} /> Plan mensual
         </button>
         <button
           onClick={() => setActiveTab('visual')}
@@ -42,7 +42,7 @@ function App() {
             : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
             }`}
         >
-          <Calendar size={18} /> Visualización
+          <Calendar size={18} /> Secuencia diaria
         </button>
         <button
           onClick={() => setActiveTab('database')}

@@ -6,7 +6,6 @@ import type { Article } from '../types/article';
 import { useArticleStore } from './useArticleStore';
 import { useChangeoverStore } from './useChangeoverStore';
 import type { ChangeoverRule } from '../types/changeover';
-import { addMinutes } from 'date-fns';
 import { format } from 'date-fns';
 
 
@@ -26,7 +25,8 @@ const recalculate = (
     articles: Article[],
     rules: ChangeoverRule[],
     startDate: Date,
-    holidays: string[] = []
+    holidays: string[] = [],
+    manualStops: { id: string; start: Date; durationMinutes: number; label: string }[] = []
 ): ProductionScheduleItem[] => {
     let sorted = [...items].sort((a, b) => a.sequenceOrder - b.sequenceOrder);
 
@@ -105,7 +105,7 @@ const recalculate = (
     });
 
     // Phase 2: Simulate Timeline
-    const simulatedItems = simulateSchedule(preProcessedItems, startDate, holidays);
+    const simulatedItems = simulateSchedule(preProcessedItems, startDate, holidays, manualStops);
 
     // Phase 3: Map back
     return simulatedItems.map(simItem => ({
@@ -153,9 +153,14 @@ export const useStore = create<AppState & CalendarState>()(
 
             addScheduleItem: (item) => {
                 (get() as any)._saveSnapshot();
-                set((state) => ({
-                    schedule: [...state.schedule, item]
-                }));
+                set((state) => {
+                    const newItem: ProductionScheduleItem = {
+                        ...item,
+                        id: crypto.randomUUID(),
+                        sequenceOrder: state.schedule.length,
+                    };
+                    return { schedule: [...state.schedule, newItem] };
+                });
                 get().recalculateSchedule();
             },
 
@@ -214,10 +219,10 @@ export const useStore = create<AppState & CalendarState>()(
             })),
 
             recalculateSchedule: () => {
-                const { schedule, programStartDate, holidays } = get();
+                const { schedule, programStartDate, holidays, manualStops } = get();
                 const articles = useArticleStore.getState().articles;
                 const rules = useChangeoverStore.getState().rules;
-                const newSchedule = recalculate(schedule, articles, rules, programStartDate, holidays);
+                const newSchedule = recalculate(schedule, articles, rules, programStartDate, holidays, manualStops);
                 set({ schedule: newSchedule });
             },
 
@@ -273,6 +278,27 @@ export const useStore = create<AppState & CalendarState>()(
             isHoliday: (date: Date): boolean => {
                 const dateStr = format(date, 'yyyy-MM-dd');
                 return get().holidays.includes(dateStr);
+            },
+
+            // Manual Stops
+            manualStops: [],
+            addManualStop: (stop) => {
+                set((state) => ({
+                    manualStops: [...state.manualStops, stop]
+                }));
+                get().recalculateSchedule();
+            },
+            updateManualStop: (id, updates) => {
+                set((state) => ({
+                    manualStops: state.manualStops.map(s => s.id === id ? { ...s, ...updates } : s)
+                }));
+                get().recalculateSchedule();
+            },
+            deleteManualStop: (id) => {
+                set((state) => ({
+                    manualStops: state.manualStops.filter(s => s.id !== id)
+                }));
+                get().recalculateSchedule();
             },
 
 

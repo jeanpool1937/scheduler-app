@@ -4,11 +4,13 @@ import { useArticleStore } from '../store/useArticleStore';
 import { format, addDays, startOfDay, endOfDay, differenceInMinutes, isAfter, isBefore } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Printer, Zap } from 'lucide-react';
-import type { ProductionScheduleItem } from '../types';
+import type { ProductionScheduleItem, SegmentType } from '../types';
 
 interface DailyEvent {
-    id: string; // Original ID or generated for split
-    type: 'production' | 'changeover' | 'maintenance' | 'maintenance_hp' | 'adjustment' | 'quality_change' | 'stop_change' | 'ring_change' | 'channel_change';
+    id: string;
+    originalItemId?: string;
+    type: SegmentType;
+    label: string;
     description: string;
     startTime: Date;
     endTime: Date;
@@ -107,7 +109,7 @@ export const VisualSchedule: React.FC = () => {
                         dayBucket.events.push({
                             id: `${item.id}_${dayBucket.events.length}`, // visual ID
                             originalItemId: item.id,
-                            type: seg.type as any, // Cast to match
+                            type: seg.type,
                             label: seg.label,
                             description: seg.description,
                             startTime: currentStart,
@@ -268,8 +270,8 @@ export const VisualSchedule: React.FC = () => {
                                     const descUpper = event.description.toUpperCase();
                                     const isPeakHour = labelUpper.includes('HORA PUNTA') || descUpper.includes('HORA PUNTA') || event.type === 'maintenance_hp';
 
-                                    const isChangeover = event.type === 'changeover';
-                                    const isStop = event.type === 'maintenance' || event.type === 'maintenance_hp' || event.type === 'stop_change' || event.type === 'quality_change' || event.type === 'ring_change' || event.type === 'channel_change';
+                                    const isChangeover = event.type === 'changeover' || event.type === 'adjustment';
+                                    const isStop = event.type === 'maintenance_hp' || event.type === 'forced_stop' || event.type === 'stop_change' || event.type === 'quality_change' || event.type === 'ring_change' || event.type === 'channel_change';
 
                                     // Row Styling Logic
                                     let rowClass = "border-b border-gray-200 print:border-gray-300";

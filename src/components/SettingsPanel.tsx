@@ -1,16 +1,24 @@
 
-import React, { useState } from 'react';
+import React from 'react';
 import { useStore } from '../store/useStore';
 import { useArticleStore } from '../store/useArticleStore';
 import { useChangeoverStore } from '../store/useChangeoverStore';
-import { Settings, Download, Database, Upload } from 'lucide-react';
-import { v4 as uuidv4 } from 'uuid';
+import { Download, Database, Upload } from 'lucide-react';
 import { HolidayConfig } from './HolidayConfig';
+import { ManualStopsConfig } from './ManualStopsConfig';
 
 export const SettingsPanel: React.FC = () => {
     const {
         stoppageConfigs,
-        const { articles, setArticles } = useArticleStore();
+        programStartDate,
+        columnLabels,
+        schedule,
+        setStoppageConfigs,
+        setProgramStartDate,
+        importColumnLabels,
+        setSchedule
+    } = useStore();
+    const { articles, setArticles } = useArticleStore();
     const { rules: changeovers, setRules } = useChangeoverStore();
 
     const handleExportBackup = () => {
@@ -146,6 +154,12 @@ export const SettingsPanel: React.FC = () => {
 
                 {/* Holidays Configuration */}
                 <HolidayConfig />
+
+                {/* Manual Stops Configuration */}
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                    <h2 className="text-xl font-bold text-gray-800 mb-6">Paradas Programadas Manuales</h2>
+                    <ManualStopsConfig />
+                </div>
             </div>
         </div>
     );
