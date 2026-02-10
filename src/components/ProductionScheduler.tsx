@@ -40,6 +40,132 @@ export const ProductionScheduler: React.FC = () => {
     // Context Menu State
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; rowIndex: number; rowId: string } | null>(null);
 
+    // Grid Ref
+    const gridRef = React.useRef<AgGridReact>(null);
+
+    // --- Custom Cell Selection State ---
+    const [selectionStart, setSelectionStart] = useState<{ rowIndex: number; colId: string } | null>(null);
+    const [selectionEnd, setSelectionEnd] = useState<{ rowIndex: number; colId: string } | null>(null);
+    const [isSelecting, setIsSelecting] = useState(false);
+
+    // Reset selection on outside click
+    React.useEffect(() => {
+        const handleMouseUp = () => setIsSelecting(false);
+        window.addEventListener('mouseup', handleMouseUp);
+        return () => window.removeEventListener('mouseup', handleMouseUp);
+    }, []);
+
+    // Copy Handler
+    React.useEffect(() => {
+        const handleCopy = async (e: ClipboardEvent) => {
+            if (!selectionStart || !selectionEnd || !gridRef.current?.api) return;
+
+            const api = gridRef.current.api;
+            // Use displayed columns to respect user reordering
+            const displayedColumns = api.getAllDisplayedColumns();
+
+            const startColIndex = displayedColumns.findIndex(c => c.getColId() === selectionStart.colId);
+            const endColIndex = displayedColumns.findIndex(c => c.getColId() === selectionEnd.colId);
+
+            if (startColIndex === -1 || endColIndex === -1) return;
+
+            const minColIdx = Math.min(startColIndex, endColIndex);
+            const maxColIdx = Math.max(startColIndex, endColIndex);
+
+            const minRowIdx = Math.min(selectionStart.rowIndex, selectionEnd.rowIndex);
+            const maxRowIdx = Math.max(selectionStart.rowIndex, selectionEnd.rowIndex);
+
+            const rows: string[] = [];
+
+            for (let r = minRowIdx; r <= maxRowIdx; r++) {
+                const rowNode = api.getDisplayedRowAtIndex(r);
+                if (!rowNode) continue;
+
+                const rowCells: string[] = [];
+                for (let c = minColIdx; c <= maxColIdx; c++) {
+                    const col = displayedColumns[c];
+                    // Fix: getCellValue signature safety
+                    const val = api.getCellValue({ rowNode, colId: col.getColId() } as any);
+                    rowCells.push(val != null ? String(val) : '');
+                }
+                rows.push(rowCells.join('\t'));
+            }
+
+            if (rows.length > 0) {
+                const text = rows.join('\n');
+                try {
+                    await navigator.clipboard.writeText(text);
+                    e.preventDefault(); // Prevent default copy
+                } catch (err) {
+                    console.error('Failed to copy', err);
+                }
+            }
+        };
+
+        document.addEventListener('copy', handleCopy as any);
+        return () => document.removeEventListener('copy', handleCopy as any);
+    }, [selectionStart, selectionEnd]);
+
+    const onCellMouseDown = useCallback((params: any) => {
+        // Start selection
+        if (params.node.rowIndex === null || params.node.rowIndex === undefined) return;
+
+        if (params.event.shiftKey && selectionStart) {
+            setSelectionEnd({ rowIndex: params.node.rowIndex, colId: params.column.getColId() });
+            setIsSelecting(true);
+        } else {
+            setSelectionStart({ rowIndex: params.node.rowIndex, colId: params.column.getColId() });
+            setSelectionEnd({ rowIndex: params.node.rowIndex, colId: params.column.getColId() });
+            setIsSelecting(true);
+        }
+    }, [selectionStart]);
+
+    const onCellMouseOver = useCallback((params: any) => {
+        if (isSelecting && params.node.rowIndex !== null && params.node.rowIndex !== undefined) {
+            setSelectionEnd({ rowIndex: params.node.rowIndex, colId: params.column.getColId() });
+        }
+    }, [isSelecting]);
+
+    // Custom cell class rule that calculates selection on the fly
+    const getCellClassRequest = useCallback((params: any) => {
+        if (!selectionStart || !selectionEnd) return false;
+
+        const api = params.api;
+        if (!api) return false;
+
+        const rowIndex = params.node.rowIndex;
+        if (rowIndex === null || rowIndex === undefined) return false;
+
+        // Determine bounds
+        const minRow = Math.min(selectionStart.rowIndex, selectionEnd.rowIndex);
+        const maxRow = Math.max(selectionStart.rowIndex, selectionEnd.rowIndex);
+
+        if (rowIndex < minRow || rowIndex > maxRow) return false;
+
+        // Determine Col bounds
+        const displayedColumns = api.getAllDisplayedColumns();
+        const startColIndex = displayedColumns.findIndex((c: any) => c.getColId() === selectionStart.colId);
+        const endColIndex = displayedColumns.findIndex((c: any) => c.getColId() === selectionEnd.colId);
+
+        const minCol = Math.min(startColIndex, endColIndex);
+        const maxCol = Math.max(startColIndex, endColIndex);
+
+        const colId = params.column.getColId();
+        const colIdx = displayedColumns.findIndex((c: any) => c.getColId() === colId);
+
+        return colIdx >= minCol && colIdx <= maxCol;
+    }, [selectionStart, selectionEnd]);
+
+    const defaultColDef = useMemo<ColDef>(() => ({
+        resizable: true,
+        sortable: true,
+        wrapHeaderText: true,
+        autoHeaderHeight: true,
+        cellClassRules: {
+            'cell-selected': getCellClassRequest
+        }
+    }), [getCellClassRequest]);
+
     // Estado para feedback visual al guardar distribución
     const [layoutSaved, setLayoutSaved] = useState(false);
 
@@ -130,13 +256,6 @@ export const ProductionScheduler: React.FC = () => {
             });
         }
     }, [articles]);
-
-    const defaultColDef = useMemo<ColDef>(() => ({
-        resizable: true,
-        sortable: true,
-        wrapHeaderText: true,
-        autoHeaderHeight: true,
-    }), []);
 
     // State for editing column headers
     const [editingHeader, setEditingHeader] = useState<{ field: string; defaultLabel: string } | null>(null);
@@ -643,13 +762,6 @@ export const ProductionScheduler: React.FC = () => {
         });
 
         // 4. Delete Action - REMOVED (now in Context Menu)
-        // Keeping it for now as a fallback or if user wants it back?
-        // User said "en su lugar habilitar... tambien para poder eliminar".
-        // Usually visual trash icon is good for UX. Context menu is hidden. 
-        // I will keep the column unless user explicitly said "remove column".
-        // Uses said "Quitar el boton nuevo item". Didn't explicitly say "Remove delete buttons".
-        // But "para poder eliminar la fila seleccionada" via context menu implies it's the primary way?
-        // I'll leave the trash button as it's convenient and doesn't hurt.
         cols.push({
             headerName: '',
             width: 60,
@@ -666,7 +778,10 @@ export const ProductionScheduler: React.FC = () => {
 
     // --- Event Handlers ---
 
-    const gridRef = React.useRef<AgGridReact>(null);
+
+
+
+
 
     const handlePaste = useCallback((e: React.ClipboardEvent) => {
         const clipboardData = e.clipboardData.getData('text');
@@ -973,10 +1088,12 @@ export const ProductionScheduler: React.FC = () => {
                     rowSelection="multiple"
                     rowDragMultiRow={true}
                     rowDragEntireRow={false}
-                    suppressRowClickSelection={false} // Allow clicking to select
+                    suppressRowClickSelection={true} // Disable row selection on click to favor cell selection
                     onRowDragEnd={onRowDragEnd}
                     onCellValueChanged={onCellValueChanged}
                     onCellContextMenu={onCellContextMenu} // Custom Context Menu event
+                    onCellMouseDown={onCellMouseDown} // Start selection logic
+                    onCellMouseOver={onCellMouseOver} // Drag selection logic
                     preventDefaultOnContextMenu={true} // Prevent browser menu
                     animateRows={true}
                     getRowId={(params) => params.data.id}

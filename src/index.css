@@ -17,6 +17,12 @@
   font-weight: 600;
 }
 
+/* Custom Cell Selection Style */
+.cell-selected {
+  background-color: rgba(59, 130, 246, 0.2) !important; /* blue-500 with opacity */
+  border: 1px solid rgba(59, 130, 246, 0.5) !important;
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
