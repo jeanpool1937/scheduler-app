@@ -164,7 +164,16 @@ export const ProductionScheduler: React.FC = () => {
         try {
             const savedState = localStorage.getItem(COLUMN_STATE_KEY);
             if (savedState) {
-                const columnState = JSON.parse(savedState);
+                let columnState = JSON.parse(savedState);
+                if (Array.isArray(columnState)) {
+                    // Remove sort from sequenceOrder to fix drag and drop issues caused by legacy state
+                    columnState = columnState.map((col: any) => {
+                        if (col.colId === 'sequenceOrder') {
+                            return { ...col, sort: null };
+                        }
+                        return col;
+                    });
+                }
                 event.api.applyColumnState({ state: columnState, applyOrder: true });
             }
         } catch (e) {
@@ -355,7 +364,6 @@ export const ProductionScheduler: React.FC = () => {
                 width: 60,
                 pinned: 'left',
                 sortable: true,
-                sort: 'asc',
                 valueFormatter: (params) => params.value != null ? String(params.value + 1) : ''
             },
             {

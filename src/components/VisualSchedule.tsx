@@ -3,7 +3,7 @@ import { useStore } from '../store/useStore';
 import { useArticleStore } from '../store/useArticleStore';
 import { format, addDays, startOfDay, endOfDay, differenceInMinutes, differenceInMilliseconds, isAfter, isBefore } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Printer, Zap } from 'lucide-react';
+import { Printer, Zap, Filter, Check, ChevronDown } from 'lucide-react';
 import type { SegmentType } from '../types';
 
 interface DailyEvent {
@@ -33,6 +33,8 @@ export const VisualSchedule: React.FC = () => {
     const { schedule, isHoliday, visualTargetDate, setVisualTargetDate } = useStore();
     const { articles } = useArticleStore();
     const [showPeakHoursOnly, setShowPeakHoursOnly] = React.useState(false);
+    const [isFilterOpen, setIsFilterOpen] = React.useState(false);
+    const [selectedTypes, setSelectedTypes] = React.useState<Set<string>>(new Set(['all']));
 
     // 0. Auto-scroll to target date if provided
     React.useEffect(() => {
@@ -40,7 +42,7 @@ export const VisualSchedule: React.FC = () => {
             const dateKey = format(visualTargetDate, 'yyyy-MM-dd');
             // Wait a tiny bit for render to stabilize if needed, though usually react's cycle is enough
             setTimeout(() => {
-                const element = document.getElementById(`day-${dateKey}`);
+                const element = document.getElementById(`day - ${dateKey} `);
                 if (element) {
                     element.scrollIntoView({ behavior: 'smooth', block: 'start' });
                     // Visual feedback: brief highlight
@@ -125,7 +127,7 @@ export const VisualSchedule: React.FC = () => {
                             if (matchesFilter) {
                                 // Add to bucket
                                 dayBucket.events.push({
-                                    id: `${item.id}_${dayBucket.events.length}`, // visual ID
+                                    id: `${item.id}_${dayBucket.events.length} `, // visual ID
                                     originalItemId: item.id,
                                     type: seg.type,
                                     label: seg.label,
@@ -188,7 +190,7 @@ export const VisualSchedule: React.FC = () => {
 
                         // Update Description if it contains duration info (specifically for Maintenance)
                         if (current.type === 'maintenance_hp') {
-                            current.description = `Mantenimiento (${Math.round(current.durationMinutes)} min)`;
+                            current.description = `Mantenimiento(${Math.round(current.durationMinutes)} min)`;
                         }
                     } else {
                         // Push current and start new
@@ -210,8 +212,6 @@ export const VisualSchedule: React.FC = () => {
         window.print();
     };
 
-    // Flatten functionality for the continuous table is handled via nested mapping in the render
-
     // Calculate Monthly Totals for the new compact Header
     const monthlyTotals = dailySchedules.reduce((acc, day) => ({
         tonnage: acc.tonnage + day.totalTonnage,
@@ -219,42 +219,96 @@ export const VisualSchedule: React.FC = () => {
         stoppageMinutes: acc.stoppageMinutes + day.totalStoppageMinutes
     }), { tonnage: 0, productionMinutes: 0, stoppageMinutes: 0 });
 
+    // Filter Logic
+    const typeCounts = useMemo(() => {
+        const counts: Record<string, number> = {};
+        dailySchedules.forEach(day => {
+            day.events.forEach(event => {
+                const type = event.type || 'unknown';
+                counts[type] = (counts[type] || 0) + 1;
+            });
+        });
+        return counts;
+    }, [dailySchedules]);
+
+    const availableTypes = useMemo(() => {
+        const types = Object.keys(typeCounts).sort();
+        // Move 'production' to the top if it exists
+        if (types.includes('production')) {
+            return ['production', ...types.filter(t => t !== 'production')];
+        }
+        return types;
+    }, [typeCounts]);
+
+    const toggleType = (type: string) => {
+        const newTypes = new Set(selectedTypes);
+        if (type === 'all') {
+            if (newTypes.has('all')) {
+                // If unchecking 'all', technically we should uncheck everything or decide behavior.
+                // Better: 'all' is distinct. If clicking 'all', we clear others and set 'all'
+                newTypes.clear();
+                newTypes.add('all');
+            } else {
+                newTypes.clear();
+                newTypes.add('all');
+            }
+        } else {
+            newTypes.delete('all');
+            if (newTypes.has(type)) {
+                newTypes.delete(type);
+                if (newTypes.size === 0) newTypes.add('all');
+            } else {
+                newTypes.add(type);
+            }
+        }
+        setSelectedTypes(newTypes);
+    };
+
+    const SEGMENT_TYPE_LABELS: Record<string, string> = {
+        production: 'Producción',
+        changeover: 'Cambio de Medida',
+        maintenance_hp: 'Mantenimiento HP',
+        maintenance: 'Mantenimiento',
+        lunch: 'Refrigerio',
+        forced_stop: 'Parada Forzada',
+        stop_change: 'Parada Cambio',
+        quality_change: 'Cambio Calidad',
+        ring_change: 'Cambio Anillo',
+        channel_change: 'Cambio Canal',
+        adjustment: 'Ajuste',
+        unknown: 'Desconocido'
+    };
+
     return (
         <div className="bg-white h-full overflow-y-auto relative p-4 print:p-0 font-sans text-gray-900 print:text-black print:overflow-visible print:h-auto print:block">
             {/* INJECTED PRINT STYLES */}
             <style>{`
-                @media print {
-                    @page { margin: 1cm; size: A4 portrait; }
-                    html, body, #root, .app-container {
-                        height: auto !important;
-                        min-height: 100% !important;
-                        overflow: visible !important;
-                        display: block !important;
-                        background: white !important;
-                    }
-                    /* Reset any potential flex/grid constraints in parents */
+@media print {
+    @page { margin: 1cm; size: A4 portrait; }
+    html, body, #root, .app - container {
+        height: auto!important;
+        min - height: 100 % !important;
+        overflow: visible!important;
+        display: block!important;
+        background: white!important;
+    }
                     div {
-                        display: block !important;
-                        height: auto !important;
-                        position: static !important;
-                        overflow: visible !important;
-                    }
-                    
-                    /* Table Mechanics */
+        display: block!important;
+        height: auto!important;
+        position: static!important;
+        overflow: visible!important;
+    }
                     table {
-                        width: 100% !important;
-                        table-layout: fixed !important;
-                        border-collapse: collapse !important;
-                    }
-                    thead { display: table-header-group !important; }
-                    tfoot { display: table-footer-group !important; }
-                    tr { page-break-inside: avoid !important; break-inside: avoid !important; }
-                    td, th { page-break-inside: avoid !important; break-inside: avoid !important; }
-                    
-                    /* Hide UI */
-                    button, nav, header:not(.print-header) { display: none !important; }
-                }
-            `}</style>
+        width: 100 % !important;
+        table - layout: fixed!important;
+        border - collapse: collapse!important;
+    }
+                    thead { display: table - header - group!important; }
+                    tfoot { display: table - footer - group!important; }
+    tr, td, th { page -break-inside: avoid!important; break-inside: avoid!important; }
+    button, nav, header: not(.print - header) { display: none!important; }
+}
+`}</style>
 
             {/* Ultra Compact Global Header */}
             <header className="print-header mb-4 border-b-2 border-black pb-2 flex justify-between items-end print:mb-2 bg-white block">
@@ -270,6 +324,62 @@ export const VisualSchedule: React.FC = () => {
                 </div>
 
                 <div className="flex gap-4 items-center print:hidden">
+                    {/* FILTER DROPDOWN */}
+                    <div className="relative" onClick={e => e.stopPropagation()}>
+                        <button
+                            onClick={() => setIsFilterOpen(!isFilterOpen)}
+                            className={`flex items - center gap - 2 px - 4 py - 2 rounded text - xs font - bold transition shadow ${!selectedTypes.has('all')
+                                ? 'bg-blue-100 text-blue-700 border border-blue-300 ring-2 ring-blue-200'
+                                : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                                } `}
+                        >
+                            <Filter size={16} className={!selectedTypes.has('all') ? 'fill-current' : ''} />
+                            FILTRAR EVENTOS
+                            <ChevronDown size={14} />
+                        </button>
+
+                        {isFilterOpen && (
+                            <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-lg shadow-xl border border-gray-200 z-50 overflow-hidden">
+                                <div className="p-2 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                                    <span className="text-xs font-bold text-gray-500">TIPOS DE EVENTO</span>
+                                    <button
+                                        onClick={() => { setSelectedTypes(new Set(['all'])); setIsFilterOpen(false); }}
+                                        className="text-[10px] text-blue-600 font-bold hover:underline"
+                                    >
+                                        VER TODO
+                                    </button>
+                                </div>
+                                <div className="max-h-64 overflow-y-auto p-1">
+                                    <button
+                                        onClick={() => toggleType('all')}
+                                        className={`w - full text - left px - 3 py - 2 text - xs flex items - center gap - 2 rounded hover: bg - gray - 50 ${selectedTypes.has('all') ? 'font-bold text-blue-700 bg-blue-50' : 'text-gray-700'} `}
+                                    >
+                                        <div className={`w - 4 h - 4 rounded border flex items - center justify - center ${selectedTypes.has('all') ? 'bg-blue-600 border-blue-600' : 'border-gray-300'} `}>
+                                            {selectedTypes.has('all') && <Check size={10} className="text-white" />}
+                                        </div>
+                                        Todos los tipos
+                                    </button>
+                                    {availableTypes.map(type => (
+                                        <button
+                                            key={type}
+                                            onClick={() => toggleType(type)}
+                                            className={`w - full text - left px - 3 py - 2 text - xs flex items - center gap - 2 rounded hover: bg - gray - 50 ${selectedTypes.has(type) ? 'font-bold text-blue-700 bg-blue-50' : 'text-gray-700'} `}
+                                        >
+                                            <div className={`w - 4 h - 4 rounded border flex items - center justify - center ${selectedTypes.has(type) ? 'bg-blue-600 border-blue-600' : 'border-gray-300'} `}>
+                                                {selectedTypes.has(type) && <Check size={10} className="text-white" />}
+                                            </div>
+                                            <span className="flex-1 truncate">{SEGMENT_TYPE_LABELS[type] || type}</span>
+                                            <span className="text-gray-400 font-mono text-[10px]">{typeCounts[type]}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                        {isFilterOpen && (
+                            <div className="fixed inset-0 z-40" onClick={() => setIsFilterOpen(false)} />
+                        )}
+                    </div>
+
                     <button
                         onClick={handlePrint}
                         className="flex items-center gap-2 bg-black text-white px-4 py-2 rounded text-xs font-bold hover:bg-gray-800 transition shadow"
@@ -278,10 +388,10 @@ export const VisualSchedule: React.FC = () => {
                     </button>
                     <button
                         onClick={() => setShowPeakHoursOnly(!showPeakHoursOnly)}
-                        className={`flex items-center gap-2 px-4 py-2 rounded text-xs font-bold transition shadow ${showPeakHoursOnly
+                        className={`flex items - center gap - 2 px - 4 py - 2 rounded text - xs font - bold transition shadow ${showPeakHoursOnly
                             ? 'bg-purple-100 text-purple-700 border border-purple-300 ring-2 ring-purple-200'
                             : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-                            }`}
+                            } `}
                         title="Mostrar solo items que intersectan Lunes-Viernes 18:30-20:30"
                     >
                         <Zap size={16} className={showPeakHoursOnly ? 'fill-current' : ''} />
@@ -316,7 +426,7 @@ export const VisualSchedule: React.FC = () => {
                             <React.Fragment key={day.date.toISOString()}>
                                 {/* DAY HEADER ROW */}
                                 <tr
-                                    id={`day-${format(day.date, 'yyyy-MM-dd')}`}
+                                    id={`day - ${format(day.date, 'yyyy-MM-dd')} `}
                                     className="bg-gray-200 print:bg-gray-300 border-t-2 border-black break-after-avoid transition-colors duration-500"
                                 >
                                     <td colSpan={5} className="p-1 border border-gray-400">
@@ -333,9 +443,14 @@ export const VisualSchedule: React.FC = () => {
 
                                 {/* EVENT ROWS */}
                                 {day.events.map((event) => {
+                                    // Event Filtering Logic
+                                    const isVisible = selectedTypes.has('all') || selectedTypes.has(event.type);
+
+                                    if (!isVisible) return null;
+
                                     // Robust check for Peak Hour
-                                    const labelUpper = event.label.toUpperCase();
-                                    const descUpper = event.description.toUpperCase();
+                                    const labelUpper = event.label ? event.label.toUpperCase() : '';
+                                    const descUpper = event.description ? event.description.toUpperCase() : '';
                                     const isPeakHour = labelUpper.includes('HORA PUNTA') || descUpper.includes('HORA PUNTA') || event.type === 'maintenance_hp';
 
                                     const isChangeover = event.type === 'changeover' || event.type === 'adjustment';
@@ -347,10 +462,13 @@ export const VisualSchedule: React.FC = () => {
                                     else if (isChangeover) rowClass += " bg-orange-50 print:bg-white";
                                     else if (isStop) rowClass += " bg-yellow-50 print:bg-white";
 
+                                    // Color override from Segment
+                                    const style = event.color ? { backgroundColor: `${event.color} 15` } : {};
+
                                     return (
-                                        <tr key={event.id} className={rowClass}>
+                                        <tr key={event.id} className={rowClass} style={style}>
                                             {/* Time */}
-                                            <td className="p-0.5 border-r border-gray-200 print:border-gray-300 font-mono whitespace-nowrap">
+                                            <td className="p-0.5 border-r border-gray-200 print:border-gray-300 font-mono whitespace-nowrap text-center">
                                                 {format(event.startTime, 'HH:mm')} - {format(event.endTime, 'HH:mm')}
                                             </td>
 
@@ -367,7 +485,10 @@ export const VisualSchedule: React.FC = () => {
                                                             {event.skuCode}
                                                         </span>
                                                     ) : (
-                                                        <span className={`px-1 rounded text-[8px] font-bold uppercase tracking-wider print:border print:border-black print:bg-transparent ${event.color}`}>
+                                                        <span
+                                                            className="px-1 rounded text-[8px] font-bold uppercase tracking-wider print:border print:border-black print:bg-transparent"
+                                                            style={{ backgroundColor: event.color, color: '#333' }}
+                                                        >
                                                             {event.label.substring(0, 10)}
                                                         </span>
                                                     )}
@@ -376,7 +497,7 @@ export const VisualSchedule: React.FC = () => {
 
                                             {/* Description */}
                                             <td className="p-0.5 border-r border-gray-200 print:border-gray-300">
-                                                <span className={`font-semibold ${isPeakHour ? 'text-red-700' : 'text-gray-900'}`}>
+                                                <span className={`font - semibold ${isPeakHour ? 'text-red-700' : 'text-gray-900'} `}>
                                                     {event.type === 'production' && event.skuCode
                                                         ? (articles.find(a => a.codigoProgramacion === event.skuCode)?.descripcion || event.description)
                                                         : event.description
