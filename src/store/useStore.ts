@@ -32,9 +32,15 @@ const recalculate = (
 
     // Phase 1: Calculate Static Attributes (Changeovers, Rates, Def. Durations)
     const preProcessedItems = sorted.map((item, index) => {
-        // Safe SKU matching: trim and string comparison
-        const itemSku = String(item.skuCode || '').trim();
-        const article = articles.find(a => String(a.codigoProgramacion || '').trim() === itemSku);
+        // Robust SKU matching: remove all whitespace/invisible chars
+        const cleanSku = String(item.skuCode || '').replace(/\s+/g, '');
+
+        let article = articles.find(a => String(a.codigoProgramacion || '').replace(/\s+/g, '') === cleanSku);
+
+        // Fallback: Try matching by skuLaminacion (numeric) if string match fails
+        if (!article) {
+            article = articles.find(a => String(a.skuLaminacion || '') === cleanSku);
+        }
 
         // Ensure pace is a number
         const pace = parseFloat(String(article?.ritmoTH || 0)) || 0;
@@ -43,8 +49,12 @@ const recalculate = (
         let changeoverMinutes = 0;
         if (index > 0) {
             const prevItem = sorted[index - 1];
-            const prevSku = String(prevItem.skuCode || '').trim();
-            const prevArticle = articles.find(a => String(a.codigoProgramacion || '').trim() === prevSku);
+            const cleanPrevSku = String(prevItem.skuCode || '').replace(/\s+/g, '');
+            let prevArticle = articles.find(a => String(a.codigoProgramacion || '').replace(/\s+/g, '') === cleanPrevSku);
+
+            if (!prevArticle) {
+                prevArticle = articles.find(a => String(a.skuLaminacion || '') === cleanPrevSku);
+            }
 
             if (article?.idTablaCambioMedida && prevArticle?.idTablaCambioMedida) {
                 const fromId = String(prevArticle.idTablaCambioMedida).trim();

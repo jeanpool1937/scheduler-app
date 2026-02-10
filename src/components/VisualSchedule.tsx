@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { useStore } from '../store/useStore';
 import { useArticleStore } from '../store/useArticleStore';
-import { format, addDays, startOfDay, endOfDay, differenceInMinutes, isAfter, isBefore } from 'date-fns';
+import { format, addDays, startOfDay, endOfDay, differenceInMinutes, differenceInMilliseconds, isAfter, isBefore } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Printer, Zap } from 'lucide-react';
 import type { SegmentType } from '../types';
@@ -113,7 +113,9 @@ export const VisualSchedule: React.FC = () => {
                         const dayBucket = getDayBucket(currentStart);
                         const dayEnd = endOfDay(currentStart);
                         const actualEnd = isBefore(end, dayEnd) ? end : dayEnd;
-                        const duration = differenceInMinutes(actualEnd, currentStart);
+                        // PRECISION FIX: Use milliseconds to avoid integer rounding errors
+                        // differenceInMinutes truncates, causing tonnage mismatch (e.g. 2900 vs 2897.1)
+                        const duration = differenceInMilliseconds(actualEnd, currentStart) / 60000;
 
                         if (duration > 0) {
                             // FILTER APPLIED HERE:
@@ -133,7 +135,7 @@ export const VisualSchedule: React.FC = () => {
                                     durationMinutes: duration,
                                     skuCode: item.skuCode,
                                     // Tonnage only applies to production
-                                    tonnage: seg.type === 'production' && item.quantity
+                                    tonnage: seg.type === 'production' && item.quantity && item.productionTimeMinutes > 0
                                         ? (item.quantity * (duration / item.productionTimeMinutes))
                                         : 0,
                                     color: seg.color
@@ -173,9 +175,10 @@ export const VisualSchedule: React.FC = () => {
                     // Especialmente útil para Mantenimiento partido
                     const isSameType = current.type === next.type;
                     const isSameLabel = current.label === next.label; // O description si prefieres, pero label suele ser el tipo
+                    const isSameSku = current.skuCode === next.skuCode; // CRITICAL: Don't merge if SKU changes
                     const isContiguous = Math.abs(differenceInMinutes(next.startTime, current.endTime)) < 1; // Tolerancia 1 min
 
-                    if (isSameType && isSameLabel && isContiguous) {
+                    if (isSameType && isSameLabel && isSameSku && isContiguous) {
                         // MERGE
                         current.endTime = next.endTime;
                         current.durationMinutes += next.durationMinutes;
