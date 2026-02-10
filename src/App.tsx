@@ -1,5 +1,4 @@
 
-import { useState } from 'react';
 import 'ag-grid-community/styles/ag-grid.css'; // Core grid CSS, always needed
 import 'ag-grid-community/styles/ag-theme-quartz.css'; // Theme
 import { DatabaseLayout } from './components/DatabaseLayout';
@@ -8,8 +7,10 @@ import { VisualSchedule } from './components/VisualSchedule';
 import { SettingsPanel } from './components/SettingsPanel';
 import { LayoutDashboard, Database, Settings, Factory, Calendar } from 'lucide-react';
 
+import { useStore } from './store/useStore';
+
 function App() {
-  const [activeTab, setActiveTab] = useState<'scheduler' | 'database' | 'settings' | 'visual'>('scheduler');
+  const { activeTab, setActiveTab } = useStore();
 
   return (
     <div className="h-screen flex flex-col bg-gray-50 overflow-hidden print:h-auto print:overflow-visible">

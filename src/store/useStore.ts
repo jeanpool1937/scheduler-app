@@ -32,14 +32,19 @@ const recalculate = (
 
     // Phase 1: Calculate Static Attributes (Changeovers, Rates, Def. Durations)
     const preProcessedItems = sorted.map((item, index) => {
-        const article = articles.find(a => a.codigoProgramacion === item.skuCode);
-        const pace = article?.ritmoTH || 0;
+        // Safe SKU matching: trim and string comparison
+        const itemSku = String(item.skuCode || '').trim();
+        const article = articles.find(a => String(a.codigoProgramacion || '').trim() === itemSku);
+
+        // Ensure pace is a number
+        const pace = parseFloat(String(article?.ritmoTH || 0)) || 0;
 
         // 1. Calculate Changeover
         let changeoverMinutes = 0;
         if (index > 0) {
             const prevItem = sorted[index - 1];
-            const prevArticle = articles.find(a => a.codigoProgramacion === prevItem.skuCode);
+            const prevSku = String(prevItem.skuCode || '').trim();
+            const prevArticle = articles.find(a => String(a.codigoProgramacion || '').trim() === prevSku);
 
             if (article?.idTablaCambioMedida && prevArticle?.idTablaCambioMedida) {
                 const fromId = String(prevArticle.idTablaCambioMedida).trim();
@@ -283,25 +288,121 @@ export const useStore = create<AppState & CalendarState>()(
             // Manual Stops
             manualStops: [],
             addManualStop: (stop) => {
-                set((state) => ({
-                    manualStops: [...state.manualStops, stop]
-                }));
+                const state = get();
+                const newStops = [...state.manualStops, stop];
+                (get() as any)._saveSnapshot();
+                set({ manualStops: newStops });
                 get().recalculateSchedule();
             },
             updateManualStop: (id, updates) => {
-                set((state) => ({
-                    manualStops: state.manualStops.map(s => s.id === id ? { ...s, ...updates } : s)
-                }));
+                const state = get();
+                const newStops = state.manualStops.map(s => s.id === id ? { ...s, ...updates } : s);
+                (get() as any)._saveSnapshot();
+                set({ manualStops: newStops });
                 get().recalculateSchedule();
             },
             deleteManualStop: (id) => {
+                const state = get();
+                const newStops = state.manualStops.filter(s => s.id !== id);
+                (get() as any)._saveSnapshot();
+                set({ manualStops: newStops });
+                get().recalculateSchedule();
+            },
+
+            // Reverse Calculation: Set End Date -> Calculate Quantity
+            updateItemEndTime: (itemId: string, targetEndDate: Date) => {
+                const state = get();
+                const { schedule, programStartDate, holidays, manualStops } = state;
+                const articles = useArticleStore.getState().articles;
+                const rules = useChangeoverStore.getState().rules;
+
+                // 1. Find the item
+                const itemIndex = schedule.findIndex(s => s.id === itemId);
+                if (itemIndex === -1) return;
+                const item = schedule[itemIndex];
+
+                // 2. Get Start Time (from previous recalculation)
+                if (!item.startTime) return; // Should allow recalculate first if missing
+                const startTime = new Date(item.startTime);
+
+                // Validation
+                if (targetEndDate <= startTime) {
+                    alert('La fecha fin debe ser posterior a la fecha de inicio.');
+                    return;
+                }
+
+                // 3. Iterative Solver
+                // Goal: Find quantity Q such that simulate(Q).endTime approx targetEndDate
+                // Initial Estimate based on Pace
+                const pace = item.calculatedPace || 1; // Tons per Hour
+                const targetDurationMinutes = (targetEndDate.getTime() - startTime.getTime()) / 60000;
+
+                // Estimate: Pure production time = Total Time (ignoring stoppages for first guess)
+                // This will be an OVER-estimate of quantity if there are stoppages, which is safer
+                // Better yet, use current ratio if available
+                let currentQuantity = item.quantity || 0;
+                let currentDuration = item.productionTimeMinutes || 0;
+                // Fix: productionTimeMinutes is pure production. Total duration is endTime - startTime
+                if (item.endTime && item.startTime) {
+                    currentDuration = (new Date(item.endTime).getTime() - new Date(item.startTime).getTime()) / 60000;
+                }
+
+                let estimatedQuantity = 0;
+                if (currentQuantity > 0 && currentDuration > 0) {
+                    // Proportional adjustment
+                    estimatedQuantity = currentQuantity * (targetDurationMinutes / currentDuration);
+                } else {
+                    // Fallback to Pace
+                    // Q = (Time / 60) * Pace
+                    estimatedQuantity = (targetDurationMinutes / 60) * pace;
+                }
+
+                // Iteration Loop (Max 3 passes)
+                let bestQuantity = estimatedQuantity;
+
+                // Helper to simulate single pass
+                const testQuantity = (q: number) => {
+                    // Create temp schedule with updated quantity
+                    const tempSchedule = [...schedule];
+                    tempSchedule[itemIndex] = { ...item, quantity: q };
+
+                    // Run Recalculation (Stateless)
+                    const simulated = recalculate(tempSchedule, articles, rules, programStartDate, holidays, manualStops);
+                    const simulatedItem = simulated[itemIndex];
+
+                    if (!simulatedItem.computedEnd) return { error: Infinity, diff: 0, end: new Date() };
+
+                    const diffMinutes = (simulatedItem.computedEnd.getTime() - targetEndDate.getTime()) / 60000;
+                    return { error: Math.abs(diffMinutes), diff: diffMinutes, end: simulatedItem.computedEnd };
+                };
+
+                for (let i = 0; i < 3; i++) {
+                    const result = testQuantity(bestQuantity);
+
+                    if (result.error < 2) break; // Tolerance: 2 minutes
+
+                    // Adjust: NewQ = OldQ - (DiffMinutes * (Pace / 60))
+                    // If Diff > 0 (Too late), we need less quantity. 
+                    // Quantity per minute = Pace / 60
+                    const adjustment = result.diff * (pace / 60);
+                    bestQuantity -= adjustment;
+
+                    if (bestQuantity < 0) bestQuantity = 0;
+                }
+
+                // Final Update
+                (get() as any)._saveSnapshot();
                 set((state) => ({
-                    manualStops: state.manualStops.filter(s => s.id !== id)
+                    schedule: state.schedule.map((s, idx) => (idx === itemIndex ? { ...s, quantity: Math.round(bestQuantity * 100) / 100 } : s))
                 }));
                 get().recalculateSchedule();
             },
 
-
+            // Navigation
+            activeTab: 'scheduler',
+            visualTargetDate: null,
+            setActiveTab: (tab) => set({ activeTab: tab }),
+            setVisualTargetDate: (date) => set({ visualTargetDate: date }),
         }),
         {
             name: 'scheduler-storage',

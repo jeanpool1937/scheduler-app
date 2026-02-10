@@ -1,5 +1,5 @@
 
-import { addMinutes, differenceInMilliseconds, getDay, isAfter, isBefore, setHours, setMinutes, startOfDay, addDays, format } from 'date-fns';
+import { addMinutes, differenceInMilliseconds, getDay, isAfter, isBefore, setHours, setMinutes, startOfDay, addDays, format, differenceInMinutes } from 'date-fns';
 import type { ProductionScheduleItem, SegmentType } from '../types';
 
 // ============================================================
@@ -28,7 +28,7 @@ const CHANNEL_CHANGE_WINDOW_HOURS = 7;
 const CHANNEL_CHANGE_MIN_STOPPAGE = 40;
 
 // Convergencia
-const MAX_ITERATIONS = 20;
+const MAX_ITERATIONS = 200;
 
 // ============================================================
 // TIPOS
@@ -99,7 +99,7 @@ const SEGMENT_LABELS: Record<SegmentType, string> = {
     stop_change: 'Cambio de Tope',
     ring_change: 'Cambio Anillo',
     channel_change: 'Cambio Canal',
-    maintenance_hp: 'MANTENIMIENTO HORA PUNTA',
+    maintenance_hp: 'Mantenimiento',
     forced_stop: 'Parada Manual',
 };
 
@@ -280,16 +280,7 @@ const hasSegmentAtTime = (flat: FlatSegment[], type: SegmentType, timestamp: Dat
     return flat.some(s => s.type === type && s.start.getTime() === t);
 };
 
-/**
- * Verificar si ya existe maintenance_hp que cubra la necesidad en la ventana peak
- */
-const hasHPCoverageInWindow = (flat: FlatSegment[], peakStart: Date, peakEnd: Date): boolean => {
-    return flat.some(s =>
-        s.type === 'maintenance_hp' &&
-        s.start.getTime() >= peakStart.getTime() &&
-        s.end.getTime() <= peakEnd.getTime()
-    );
-};
+
 
 /**
  * Encontrar todos los puntos de inserción necesarios para Tipo B/C
@@ -334,6 +325,11 @@ const subtractIntervals = (
 /**
  * Encontrar todos los puntos de inserción necesarios para Tipo B/C
  */
+/**
+ * Encontrar todos los puntos de inserción necesarios para Tipo B/C
+ * Implementa el patrón "Unified Daily Orchestrator" para resolver conflictos 
+ * entre reglas que ocurren el mismo día.
+ */
 const findInsertionPoints = (
     flat: FlatSegment[],
     timelineStart: Date,
@@ -344,8 +340,9 @@ const findInsertionPoints = (
     const insertions: InsertionPoint[] = [];
 
     // ===================================
-    // R5, R6, R7: Paradas Automáticas
+    // ORQUESTADOR DIARIO (R5, R6, R7)
     // ===================================
+    // Iteramos día a día para resolver dependencias entre paradas del mismo día
     let currentDay = startOfDay(timelineStart);
     const lastDay = addDays(startOfDay(timelineEnd), 1);
 
@@ -354,43 +351,61 @@ const findInsertionPoints = (
         const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
         const isHolidayDay = isHoliday(currentDay, holidays);
 
-        // R5: Cambio de Anillo a las 18:30 (todos los días)
+        // Variables de estado para el día actual
+        let proposedRingChange: InsertionPoint | null = null;
+        let proposedChannelChange: InsertionPoint | null = null;
+
+        // ------------------------------------------------------------
+        // PASO 1: R6 - Cambio de Canal (06:30)
+        // ------------------------------------------------------------
+        const channelTime = setMinutes(setHours(new Date(currentDay), CHANNEL_CHANGE_HOUR), CHANNEL_CHANGE_MIN);
+        channelTime.setSeconds(0, 0);
+
+        if (!isBefore(channelTime, timelineStart) && !isAfter(channelTime, timelineEnd)) {
+            // Solo si NO existe ya uno en el timeline
+            if (!hasSegmentAtTime(flat, 'channel_change', channelTime)) {
+                // Verificar ventana de 7 horas atrás
+                const windowStart = addMinutes(channelTime, -CHANNEL_CHANGE_WINDOW_HOURS * 60);
+                const stoppageInWindow = calculateStoppageInWindow(flat, windowStart, channelTime);
+
+                if (stoppageInWindow < CHANNEL_CHANGE_MIN_STOPPAGE) {
+                    proposedChannelChange = {
+                        timestamp: new Date(channelTime),
+                        type: 'channel_change',
+                        durationMinutes: CHANNEL_CHANGE_DURATION,
+                    };
+                    insertions.push(proposedChannelChange);
+                }
+            }
+        }
+
+        // ------------------------------------------------------------
+        // PASO 2: R5 - Cambio de Anillo (18:30)
+        // ------------------------------------------------------------
         const ringTime = setMinutes(setHours(new Date(currentDay), RING_CHANGE_HOUR), RING_CHANGE_MIN);
         ringTime.setSeconds(0, 0);
 
         if (!isBefore(ringTime, timelineStart) && !isAfter(ringTime, timelineEnd)) {
             if (!hasSegmentAtTime(flat, 'ring_change', ringTime)) {
                 const windowStart = addMinutes(ringTime, -RING_CHANGE_WINDOW_HOURS * 60);
+                // NOTA: Aquí idealmente deberíamos considerar 'proposedChannelChange' si cayera en ventana,
+                // pero 06:30 está lejos de 11:30-18:30, así que no afecta.
                 const stoppageInWindow = calculateStoppageInWindow(flat, windowStart, ringTime);
+
                 if (stoppageInWindow < RING_CHANGE_MIN_STOPPAGE) {
-                    insertions.push({
+                    proposedRingChange = {
                         timestamp: new Date(ringTime),
                         type: 'ring_change',
                         durationMinutes: RING_CHANGE_DURATION,
-                    });
+                    };
+                    insertions.push(proposedRingChange);
                 }
             }
         }
 
-        // R6: Cambio de Canal a las 06:30 (todos los días)
-        const channelTime = setMinutes(setHours(new Date(currentDay), CHANNEL_CHANGE_HOUR), CHANNEL_CHANGE_MIN);
-        channelTime.setSeconds(0, 0);
-
-        if (!isBefore(channelTime, timelineStart) && !isAfter(channelTime, timelineEnd)) {
-            if (!hasSegmentAtTime(flat, 'channel_change', channelTime)) {
-                const windowStart = addMinutes(channelTime, -CHANNEL_CHANGE_WINDOW_HOURS * 60);
-                const stoppageInWindow = calculateStoppageInWindow(flat, windowStart, channelTime);
-                if (stoppageInWindow < CHANNEL_CHANGE_MIN_STOPPAGE) {
-                    insertions.push({
-                        timestamp: new Date(channelTime),
-                        type: 'channel_change',
-                        durationMinutes: CHANNEL_CHANGE_DURATION,
-                    });
-                }
-            }
-        }
-
-        // R7: Mantenimiento Hora Punta (18:30-20:30 L-V, excluyendo feriados)
+        // ------------------------------------------------------------
+        // PASO 3: R7 - Mantenimiento Hora Punta (18:30-20:30)
+        // ------------------------------------------------------------
         if (!isWeekend && !isHolidayDay) {
             const peakStart = setMinutes(setHours(new Date(currentDay), PEAK_START_HOUR), PEAK_START_MIN);
             peakStart.setSeconds(0, 0);
@@ -398,23 +413,54 @@ const findInsertionPoints = (
             peakEnd.setSeconds(0, 0);
 
             if (!isBefore(peakStart, timelineStart) && !isAfter(peakStart, timelineEnd)) {
-                if (!hasHPCoverageInWindow(flat, peakStart, peakEnd)) {
-                    const coverage = calculateStoppageInWindow(flat, peakStart, peakEnd);
-                    const needed = Math.max(0, REQUIRED_HP_MINUTES - coverage);
+                // REMOVED: !hasHPCoverageInWindow check so we can iteratively "top up" maintenance
+                // if previous iterations didn't cover enough (e.g. because stops moved out of window).
 
-                    if (needed > 0.01) {
-                        // Encontrar el primer punto disponible dentro de la ventana peak
-                        const insertTime = findHPInsertionTime(flat, peakStart, peakEnd);
-                        if (insertTime) {
-                            const distToEnd = getDurationInMinutes(peakEnd, insertTime);
-                            const actualDuration = Math.min(needed, distToEnd);
-                            if (actualDuration > 0.01) {
-                                insertions.push({
-                                    timestamp: new Date(insertTime),
-                                    type: 'maintenance_hp',
-                                    durationMinutes: actualDuration,
-                                });
-                            }
+                // 1. Calcular cobertura "física" existente (Paradas Tipo A, etc.)
+                const physicalCoverage = calculateStoppageInWindow(flat, peakStart, peakEnd);
+
+                // 2. Calcular cobertura "virtual" del C. Anillo propuesto
+                let virtualCoverage = 0;
+                if (proposedRingChange) {
+                    const rcStart = proposedRingChange.timestamp;
+                    const rcEnd = addMinutes(rcStart, proposedRingChange.durationMinutes);
+
+                    // Intersección entre RingChange propuesto y ventana Peak
+                    const overlapStart = new Date(Math.max(rcStart.getTime(), peakStart.getTime()));
+                    const overlapEnd = new Date(Math.min(rcEnd.getTime(), peakEnd.getTime()));
+
+                    if (overlapStart < overlapEnd) {
+                        virtualCoverage = differenceInMinutes(overlapEnd, overlapStart);
+                    }
+                }
+
+                const totalCoverage = physicalCoverage + virtualCoverage;
+                // Use a slightly larger epsilon to avoid tiny insertions
+                const needed = Math.max(0, REQUIRED_HP_MINUTES - totalCoverage);
+
+                if (needed > 0.5) { // Threshold 0.5 min to avoid micro-stops
+                    // Determinar dónde insertar el mantenimiento
+                    // Si hubo cambio de anillo a las 18:30 (60 min), el mantenimiento debería ir a continuación (19:30).
+                    let potentialStart = findHPInsertionTime(flat, peakStart, peakEnd);
+
+                    if (proposedRingChange) {
+                        // Si hay anillo propuesto, intentamos pegar el mantenimiento justo después
+                        const rcEnd = addMinutes(proposedRingChange.timestamp, proposedRingChange.durationMinutes);
+                        if (potentialStart && rcEnd > potentialStart) {
+                            potentialStart = rcEnd;
+                        }
+                    }
+
+                    if (potentialStart && potentialStart < peakEnd) {
+                        const distToEnd = getDurationInMinutes(peakEnd, potentialStart);
+                        const actualDuration = Math.min(needed, distToEnd);
+
+                        if (actualDuration > 0.5) {
+                            insertions.push({
+                                timestamp: new Date(potentialStart),
+                                type: 'maintenance_hp',
+                                durationMinutes: actualDuration,
+                            });
                         }
                     }
                 }
@@ -471,8 +517,11 @@ const findHPInsertionTime = (
     const psTime = peakStart.getTime();
     const peTime = peakEnd.getTime();
 
-    // Buscar segmentos de producción que intersecten con la ventana peak
-    for (const seg of flat) {
+    // Ordenar segmentos para asegurar búsqueda cronológica
+    const sortedFlat = [...flat].sort((a, b) => a.start.getTime() - b.start.getTime());
+
+    // Buscar el primer hueco disponible (producción)
+    for (const seg of sortedFlat) {
         if (seg.type !== 'production') continue;
         const segStart = seg.start.getTime();
         const segEnd = seg.end.getTime();
@@ -526,13 +575,15 @@ const insertStopIntoTimeline = (
                             ? 'Cambio de Canal (Automático)'
                             : type === 'forced_stop'
                                 ? (insertion.manualLabel || 'Parada Manual')
-                                : `PARADA HORA PUNTA (${Math.round(durationMinutes)} min)`;
+                                : `Mantenimiento (${Math.round(durationMinutes)} min)`;
 
                     newSegments.push(createSegment(type, timestamp, durationMinutes, stopDescription));
 
                     // Parte 3: Producción después de la parada
                     const stopEnd = addMinutes(timestamp, durationMinutes);
-                    const afterDuration = getDurationInMinutes(seg.end, timestamp) - durationMinutes;
+                    // FIX: No restar durationMinutes. El tiempo de producción restante debe conservarse (empujar el resto)
+                    const afterDuration = getDurationInMinutes(seg.end, timestamp);
+
                     if (afterDuration > 0.01) {
                         newSegments.push({
                             ...seg,
@@ -604,13 +655,14 @@ const insertTypeBCStops = (
 
         if (insertions.length === 0) break;
 
-        // Aplicar inserciones (de última a primera para no invalidar índices)
-        const reversedInsertions = [...insertions].sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+        // Aplicar inserciones (Chronological Order + One Change Per Pass)
+        const sortedInsertions = [...insertions].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
-        for (const insertion of reversedInsertions) {
+        for (const insertion of sortedInsertions) {
             const inserted = insertStopIntoTimeline(items, insertion);
             if (inserted) {
                 changed = true;
+                break; // Restart loop to handle time shifts correctly
             }
         }
 

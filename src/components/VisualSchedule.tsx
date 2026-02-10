@@ -4,7 +4,7 @@ import { useArticleStore } from '../store/useArticleStore';
 import { format, addDays, startOfDay, endOfDay, differenceInMinutes, isAfter, isBefore } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Printer, Zap } from 'lucide-react';
-import type { ProductionScheduleItem, SegmentType } from '../types';
+import type { SegmentType } from '../types';
 
 interface DailyEvent {
     id: string;
@@ -30,9 +30,31 @@ interface DailySchedule {
 }
 
 export const VisualSchedule: React.FC = () => {
-    const { schedule, isHoliday } = useStore();
+    const { schedule, isHoliday, visualTargetDate, setVisualTargetDate } = useStore();
     const { articles } = useArticleStore();
     const [showPeakHoursOnly, setShowPeakHoursOnly] = React.useState(false);
+
+    // 0. Auto-scroll to target date if provided
+    React.useEffect(() => {
+        if (visualTargetDate) {
+            const dateKey = format(visualTargetDate, 'yyyy-MM-dd');
+            // Wait a tiny bit for render to stabilize if needed, though usually react's cycle is enough
+            setTimeout(() => {
+                const element = document.getElementById(`day-${dateKey}`);
+                if (element) {
+                    element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    // Visual feedback: brief highlight
+                    const originalBg = element.style.backgroundColor;
+                    element.style.backgroundColor = '#fde047'; // Yellow-300
+                    setTimeout(() => {
+                        element.style.backgroundColor = originalBg;
+                    }, 1500);
+                }
+            }, 100);
+            // Clear the target date so it doesn't scroll again on re-renders
+            setVisualTargetDate(null);
+        }
+    }, [visualTargetDate, setVisualTargetDate]);
 
     // 1. Process Schedule into Daily Buckets (Using Segments from Store)
     const dailySchedules = useMemo(() => {
@@ -55,35 +77,25 @@ export const VisualSchedule: React.FC = () => {
         };
 
         // Check if item overlaps with Peak Hours (Mon-Fri 18:30-20:30, excluding holidays)
-        const isPeakHourOverlap = (item: ProductionScheduleItem) => {
-            if (!item.startTime || !item.endTime) return false;
-            const start = new Date(item.startTime);
-            const end = new Date(item.endTime);
+        const checkPeakHourOverlap = (start: Date, end: Date): boolean => {
             const currentCheck = new Date(start);
-            currentCheck.setHours(0, 0, 0, 0);
-            const lastDay = new Date(end);
-            lastDay.setHours(0, 0, 0, 0);
+            // We only care about the specific day of this segment for visualization
+            const dayOfWeek = currentCheck.getDay();
 
-            while (currentCheck <= lastDay) {
-                const dayOfWeek = currentCheck.getDay();
-                // Check if it's a weekday (Mon-Fri) AND not a holiday
-                if (dayOfWeek >= 1 && dayOfWeek <= 5 && !isHoliday(currentCheck)) {
-                    const peakStart = new Date(currentCheck);
-                    peakStart.setHours(18, 30, 0, 0);
-                    const peakEnd = new Date(currentCheck);
-                    peakEnd.setHours(20, 30, 0, 0);
-                    if (start < peakEnd && end > peakStart) return true;
-                }
-                currentCheck.setDate(currentCheck.getDate() + 1);
+            // Check if it's a weekday (Mon-Fri) AND not a holiday
+            if (dayOfWeek >= 1 && dayOfWeek <= 5 && !isHoliday(currentCheck)) {
+                const peakStart = new Date(currentCheck);
+                peakStart.setHours(18, 30, 0, 0);
+                const peakEnd = new Date(currentCheck);
+                peakEnd.setHours(20, 30, 0, 0);
+
+                // Overlap check: start < peakEnd && end > peakStart
+                return start < peakEnd && end > peakStart;
             }
             return false;
         };
 
-        const filteredSchedule = showPeakHoursOnly
-            ? schedule.filter(isPeakHourOverlap)
-            : schedule;
-
-        filteredSchedule.forEach(item => {
+        schedule.forEach(item => {
             if (item.segments) {
                 item.segments.forEach(seg => {
                     const start = new Date(seg.start);
@@ -103,36 +115,42 @@ export const VisualSchedule: React.FC = () => {
                         const actualEnd = isBefore(end, dayEnd) ? end : dayEnd;
                         const duration = differenceInMinutes(actualEnd, currentStart);
 
-                        if (duration <= 0) break;
+                        if (duration > 0) {
+                            // FILTER APPLIED HERE:
+                            // If filter is ON, and this specific chunk does NOT overlap with Peak Hours, skip it.
+                            const matchesFilter = !showPeakHoursOnly || checkPeakHourOverlap(currentStart, actualEnd);
 
-                        // Add to bucket
-                        dayBucket.events.push({
-                            id: `${item.id}_${dayBucket.events.length}`, // visual ID
-                            originalItemId: item.id,
-                            type: seg.type,
-                            label: seg.label,
-                            description: seg.description,
-                            startTime: currentStart,
-                            endTime: actualEnd,
-                            durationMinutes: duration,
-                            skuCode: item.skuCode,
-                            // Tonnage only applies to production
-                            tonnage: seg.type === 'production' && item.quantity
-                                ? (item.quantity * (duration / item.productionTimeMinutes))
-                                : 0,
-                            color: seg.color
-                        });
+                            if (matchesFilter) {
+                                // Add to bucket
+                                dayBucket.events.push({
+                                    id: `${item.id}_${dayBucket.events.length}`, // visual ID
+                                    originalItemId: item.id,
+                                    type: seg.type,
+                                    label: seg.label,
+                                    description: seg.description,
+                                    startTime: currentStart,
+                                    endTime: actualEnd,
+                                    durationMinutes: duration,
+                                    skuCode: item.skuCode,
+                                    // Tonnage only applies to production
+                                    tonnage: seg.type === 'production' && item.quantity
+                                        ? (item.quantity * (duration / item.productionTimeMinutes))
+                                        : 0,
+                                    color: seg.color
+                                });
 
-                        // Update Totals
-                        if (seg.type === 'production') {
-                            dayBucket.totalProductionMinutes += duration;
-                            if (item.productionTimeMinutes > 0 && item.quantity) {
-                                dayBucket.totalTonnage += (item.quantity * (duration / item.productionTimeMinutes));
+                                // Update Totals
+                                if (seg.type === 'production') {
+                                    dayBucket.totalProductionMinutes += duration;
+                                    if (item.productionTimeMinutes > 0 && item.quantity) {
+                                        dayBucket.totalTonnage += (item.quantity * (duration / item.productionTimeMinutes));
+                                    }
+                                } else {
+                                    dayBucket.totalStoppageMinutes += duration;
+                                }
+                                dayBucket.balanceMinutes -= duration;
                             }
-                        } else {
-                            dayBucket.totalStoppageMinutes += duration;
                         }
-                        dayBucket.balanceMinutes -= duration;
 
                         currentStart = addDays(startOfDay(currentStart), 1);
                     }
@@ -140,9 +158,44 @@ export const VisualSchedule: React.FC = () => {
             }
         });
 
-        // Sort events within each day by start time
+        // Sort events within each day by start time AND Merge adjacent identical events
         daysMap.forEach(day => {
             day.events.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+
+            const mergedEvents: DailyEvent[] = [];
+            if (day.events.length > 0) {
+                let current = day.events[0];
+
+                for (let i = 1; i < day.events.length; i++) {
+                    const next = day.events[i];
+
+                    // Condición de fusión: Mismo tipo, misma descripción/label y continuidad temporal
+                    // Especialmente útil para Mantenimiento partido
+                    const isSameType = current.type === next.type;
+                    const isSameLabel = current.label === next.label; // O description si prefieres, pero label suele ser el tipo
+                    const isContiguous = Math.abs(differenceInMinutes(next.startTime, current.endTime)) < 1; // Tolerancia 1 min
+
+                    if (isSameType && isSameLabel && isContiguous) {
+                        // MERGE
+                        current.endTime = next.endTime;
+                        current.durationMinutes += next.durationMinutes;
+                        if (current.tonnage !== undefined && next.tonnage !== undefined) {
+                            current.tonnage += next.tonnage;
+                        }
+
+                        // Update Description if it contains duration info (specifically for Maintenance)
+                        if (current.type === 'maintenance_hp') {
+                            current.description = `Mantenimiento (${Math.round(current.durationMinutes)} min)`;
+                        }
+                    } else {
+                        // Push current and start new
+                        mergedEvents.push(current);
+                        current = next;
+                    }
+                }
+                mergedEvents.push(current);
+            }
+            day.events = mergedEvents;
         });
 
         // Convert Map to Array and Sort
@@ -205,7 +258,11 @@ export const VisualSchedule: React.FC = () => {
                 <div className="flex gap-8 items-end">
                     <div>
                         <h1 className="text-2xl font-black uppercase leading-none">Programación Mensual</h1>
-                        <p className="text-xs font-bold text-gray-500">Total: {monthlyTotals.tonnage.toFixed(0)} Ton | Prod: {(monthlyTotals.productionMinutes / 60).toFixed(1)}h | Paradas: {(monthlyTotals.stoppageMinutes / 60).toFixed(1)}h</p>
+                        <p className="text-sm font-black text-blue-900 mt-1">
+                            Total: {monthlyTotals.tonnage.toLocaleString('en-US', { maximumFractionDigits: 0 })} Ton |
+                            Prod: {(monthlyTotals.productionMinutes / 60).toFixed(1)}h |
+                            Paradas: {(monthlyTotals.stoppageMinutes / 60).toFixed(1)}h
+                        </p>
                     </div>
                 </div>
 
@@ -243,14 +300,22 @@ export const VisualSchedule: React.FC = () => {
                             <th className="sticky top-0 z-20 bg-black print:bg-gray-200 p-1 text-center font-bold uppercase w-12 border border-gray-600 print:border-gray-400 shadow-sm">Min</th>
                             <th className="sticky top-0 z-20 bg-black print:bg-gray-200 p-1 text-left font-bold uppercase w-24 border border-gray-600 print:border-gray-400 shadow-sm">SKU / Tipo</th>
                             <th className="sticky top-0 z-20 bg-black print:bg-gray-200 p-1 text-left font-bold uppercase border border-gray-600 print:border-gray-400 shadow-sm">Actividad / Descripción</th>
-                            <th className="sticky top-0 z-20 bg-black print:bg-gray-200 p-1 text-right font-bold uppercase w-16 border border-gray-600 print:border-gray-400 shadow-sm">Ton</th>
+                            <th className="sticky top-0 z-20 bg-black print:bg-gray-200 p-1 text-right font-bold uppercase w-16 border border-gray-600 print:border-gray-400 shadow-sm">
+                                Ton
+                                <div className="text-[9px] text-yellow-300 font-mono leading-none mt-1">
+                                    Σ {monthlyTotals.tonnage.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                                </div>
+                            </th>
                         </tr>
                     </thead>
                     <tbody>
                         {dailySchedules.map((day) => (
                             <React.Fragment key={day.date.toISOString()}>
                                 {/* DAY HEADER ROW */}
-                                <tr className="bg-gray-200 print:bg-gray-300 border-t-2 border-black break-after-avoid">
+                                <tr
+                                    id={`day-${format(day.date, 'yyyy-MM-dd')}`}
+                                    className="bg-gray-200 print:bg-gray-300 border-t-2 border-black break-after-avoid transition-colors duration-500"
+                                >
                                     <td colSpan={5} className="p-1 border border-gray-400">
                                         <div className="flex justify-between items-baseline px-1">
                                             <span className="font-black text-sm uppercase print:text-xs">

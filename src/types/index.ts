@@ -85,6 +85,7 @@ export interface AppState {
   insertScheduleItem: (index: number, item: ProductionScheduleItem) => void;
   addScheduleItems: (items: ProductionScheduleItem[]) => void;
   updateScheduleItem: (id: string, updates: Partial<ProductionScheduleItem>) => void;
+  updateItemEndTime: (id: string, targetEndDate: Date) => void;
   deleteScheduleItem: (id: string) => void;
   clearSchedule: () => void;
   reorderSchedule: (newOrder: ProductionScheduleItem[]) => void;
@@ -112,6 +113,12 @@ export interface AppState {
   isHoliday: (date: Date) => boolean;
 
   // Manual Stops
+  // Navigation State
+  activeTab: 'scheduler' | 'visual' | 'database' | 'settings';
+  visualTargetDate: Date | null;
+  setActiveTab: (tab: 'scheduler' | 'visual' | 'database' | 'settings') => void;
+  setVisualTargetDate: (date: Date | null) => void;
+
   manualStops: ManualStop[];
   addManualStop: (stop: ManualStop) => void;
   updateManualStop: (id: string, stop: Partial<ManualStop>) => void;

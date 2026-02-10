@@ -7,8 +7,9 @@ import { useArticleStore } from '../store/useArticleStore';
 import type { ProductionScheduleItem } from '../types';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Plus, Trash2, CalendarClock, Undo2, Save, RotateCcw } from 'lucide-react';
+import { Plus, Trash2, CalendarClock, Undo2, Save, RotateCcw, Eye } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
+import { TargetDateModal } from './TargetDateModal';
 
 // Clave para guardar el estado de columnas en localStorage
 const COLUMN_STATE_KEY = 'scheduler-column-state';
@@ -30,7 +31,10 @@ export const ProductionScheduler: React.FC = () => {
         canUndo,
         scheduleHistory,
         columnLabels,
-        setColumnLabel
+        setColumnLabel,
+        updateItemEndTime,
+        setActiveTab,
+        setVisualTargetDate
     } = useStore();
 
     // Context Menu State
@@ -45,6 +49,22 @@ export const ProductionScheduler: React.FC = () => {
         document.addEventListener('click', handleClick);
         return () => document.removeEventListener('click', handleClick);
     }, []);
+
+    // --- Modal State ---
+    const [modalData, setModalData] = useState<{
+        isOpen: boolean;
+        itemId: string;
+        initialDate: Date;
+        minDate: Date;
+        itemName: string;
+    } | null>(null);
+
+    const handleModalSave = (date: Date) => {
+        if (modalData) {
+            updateItemEndTime(modalData.itemId, date);
+            setModalData(null);
+        }
+    };
 
     const onCellContextMenu = useCallback((params: any) => {
         // Prevent default browser menu
@@ -97,6 +117,19 @@ export const ProductionScheduler: React.FC = () => {
     // Use Articles as the master data
     // Use Articles as the master data
     const { articles } = useArticleStore();
+
+    const onCellDoubleClicked = useCallback((params: any) => {
+        if (params.colDef.colId === 'endTime' && params.data) {
+            const item = params.data as ProductionScheduleItem;
+            setModalData({
+                isOpen: true,
+                itemId: item.id,
+                initialDate: item.endTime ? new Date(item.endTime) : new Date(),
+                minDate: item.startTime ? new Date(item.startTime) : new Date(),
+                itemName: `${item.skuCode} - ${articles.find(a => a.codigoProgramacion === item.skuCode)?.descripcion || ''}`
+            });
+        }
+    }, [articles]);
 
     const defaultColDef = useMemo<ColDef>(() => ({
         resizable: true,
@@ -524,16 +557,46 @@ export const ProductionScheduler: React.FC = () => {
         });
 
         cols.push({
+            colId: 'endTime',
             headerName: 'Fin',
             width: 160,
+            editable: true,
             valueGetter: (params) => params.data?.endTime,
-            valueFormatter: (params) => {
-                if (!params.value) return '';
-                try {
-                    return format(new Date(params.value), 'EEE dd/MM HH:mm', { locale: es });
-                } catch (e) { return ''; }
+            valueSetter: (params) => {
+                if (!params.newValue) return false;
+                const newDate = new Date(params.newValue);
+                if (isNaN(newDate.getTime())) {
+                    alert('Formato de fecha inválido. Use AAAA-MM-DD HH:mm');
+                    return false;
+                }
+                updateItemEndTime(params.data.id, newDate);
+                return true;
             },
-            cellStyle: { fontWeight: 'bold', color: '#1e3a8a' } // Blue text
+            cellRenderer: (params: any) => {
+                if (!params.value) return '';
+                let dateStr = '';
+                try {
+                    dateStr = format(new Date(params.value), 'EEE dd/MM HH:mm', { locale: es });
+                } catch (e) { return ''; }
+
+                return (
+                    <div className="flex items-center justify-between w-full h-full group">
+                        <span>{dateStr}</span>
+                        <button
+                            className="p-1 hover:bg-blue-100 rounded text-gray-400 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="Ver en Secuencia Diaria"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setVisualTargetDate(new Date(params.value));
+                                setActiveTab('visual');
+                            }}
+                        >
+                            <Eye size={16} />
+                        </button>
+                    </div>
+                );
+            },
+            cellStyle: { fontWeight: 'bold', color: '#1e3a8a', display: 'flex', alignItems: 'center' } // Blue text
         });
 
         // 3.1 Mantenimiento Column (antes "Hora Punta") - muestra duración real de segmentos maintenance_hp
@@ -544,17 +607,28 @@ export const ProductionScheduler: React.FC = () => {
             wrapHeaderText: true,
             autoHeaderHeight: true,
             valueGetter: (params) => {
-                const segments = params.data?.segments || [];
+                const data = params.data as any;
+                if (data && data.maintenanceMinutes !== undefined) {
+                    const val = data.maintenanceMinutes;
+                    return val > 0 ? `${Math.round(val)} min` : '-';
+                }
+                const segments = (data?.segments as any[]) || [];
                 const maintenanceMinutes = segments
                     .filter((s: any) => s.type === 'maintenance_hp')
                     .reduce((sum: number, s: any) => sum + s.durationMinutes, 0);
                 return maintenanceMinutes > 0 ? `${Math.round(maintenanceMinutes)} min` : '-';
             },
             cellStyle: (params) => {
-                const segments = params.data?.segments || [];
-                const maintenanceMinutes = segments
-                    .filter((s: any) => s.type === 'maintenance_hp')
-                    .reduce((sum: number, s: any) => sum + s.durationMinutes, 0);
+                let maintenanceMinutes = 0;
+                const data = params.data as any;
+                if (data && data.maintenanceMinutes !== undefined) {
+                    maintenanceMinutes = data.maintenanceMinutes;
+                } else {
+                    const segments = (data?.segments as any[]) || [];
+                    maintenanceMinutes = segments
+                        .filter((s: any) => s.type === 'maintenance_hp')
+                        .reduce((sum: number, s: any) => sum + s.durationMinutes, 0);
+                }
                 return maintenanceMinutes > 0 ? { color: '#b91c1c', fontWeight: 'bold' } : undefined;
             },
             cellRenderer: totalTooltipRenderer
@@ -579,7 +653,7 @@ export const ProductionScheduler: React.FC = () => {
         });
 
         return cols;
-    }, [articles, stoppageConfigs, deleteScheduleItem, columnLabels]);
+    }, [articles, stoppageConfigs, deleteScheduleItem, columnLabels, updateItemEndTime]);
 
 
     // --- Event Handlers ---
@@ -721,6 +795,16 @@ export const ProductionScheduler: React.FC = () => {
             style={{ outline: 'none' }}
         >
             {/* Custom Context Menu */}
+            {modalData && (
+                <TargetDateModal
+                    isOpen={modalData.isOpen}
+                    onClose={() => setModalData(null)}
+                    onSave={handleModalSave}
+                    initialDate={modalData.initialDate}
+                    minDate={modalData.minDate}
+                    itemName={modalData.itemName}
+                />
+            )}
             {contextMenu && (
                 <div
                     className="fixed z-50 bg-white border border-gray-200 rounded-lg shadow-xl py-1 w-48"
@@ -831,8 +915,8 @@ export const ProductionScheduler: React.FC = () => {
                     <button
                         onClick={handleSaveColumnLayout}
                         className={`flex items-center gap-1 px-3 py-2 rounded shadow-sm transition text-sm ${layoutSaved
-                                ? 'bg-green-100 text-green-700 border border-green-300'
-                                : 'bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100'
+                            ? 'bg-green-100 text-green-700 border border-green-300'
+                            : 'bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100'
                             }`}
                         title="Guardar la distribución actual de columnas (anchos, orden)"
                     >
@@ -890,6 +974,7 @@ export const ProductionScheduler: React.FC = () => {
                     getRowId={(params) => params.data.id}
                     pinnedBottomRowData={pinnedBottomRowData}
                     onGridReady={onGridReady}
+                    onCellDoubleClicked={onCellDoubleClicked}
                 />
             </div>
 
