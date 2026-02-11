@@ -57,15 +57,15 @@ export const ProductionScheduler: React.FC = () => {
 
     // Copy Handler
     React.useEffect(() => {
-        const handleCopy = async (e: ClipboardEvent) => {
+        const handleCopy = (e: ClipboardEvent) => {
             if (!selectionStart || !selectionEnd || !gridRef.current?.api) return;
 
             const api = gridRef.current.api;
             // Use displayed columns to respect user reordering
             const displayedColumns = api.getAllDisplayedColumns();
 
-            const startColIndex = displayedColumns.findIndex(c => c.getColId() === selectionStart.colId);
-            const endColIndex = displayedColumns.findIndex(c => c.getColId() === selectionEnd.colId);
+            const startColIndex = displayedColumns.findIndex((c: any) => c.getColId() === selectionStart.colId);
+            const endColIndex = displayedColumns.findIndex((c: any) => c.getColId() === selectionEnd.colId);
 
             if (startColIndex === -1 || endColIndex === -1) return;
 
@@ -93,11 +93,9 @@ export const ProductionScheduler: React.FC = () => {
 
             if (rows.length > 0) {
                 const text = rows.join('\n');
-                try {
-                    await navigator.clipboard.writeText(text);
-                    e.preventDefault(); // Prevent default copy
-                } catch (err) {
-                    console.error('Failed to copy', err);
+                if (e.clipboardData) {
+                    e.clipboardData.setData('text/plain', text);
+                    e.preventDefault();
                 }
             }
         };
@@ -126,9 +124,26 @@ export const ProductionScheduler: React.FC = () => {
         }
     }, [isSelecting]);
 
+    // Traffic Light System Logic
+    const getRowStatus = useCallback((data: ProductionScheduleItem) => {
+        const totalStoppages = data.stoppages ? Object.values(data.stoppages).reduce((a, b) => a + (b || 0), 0) : 0;
+        const maintenance = (data.segments || []).filter(s => s.type === 'maintenance_hp').reduce((a, b) => a + b.durationMinutes, 0);
+
+        if (maintenance > 0 || totalStoppages > 30) return 'critical'; // Red
+        if ((data.changeoverMinutes || 0) > 0 || (data.adjustmentMinutes || 0) > 0) return 'warning'; // Yellow
+        return 'normal'; // Green
+    }, []);
+
+    const rowClassRules = useMemo(() => ({
+        'row-critical': (params: any) => getRowStatus(params.data) === 'critical',
+        'row-warning': (params: any) => getRowStatus(params.data) === 'warning',
+        'row-normal': (params: any) => getRowStatus(params.data) === 'normal',
+    }), [getRowStatus]);
+
     // Custom cell class rule that calculates selection on the fly
     const getCellClassRequest = useCallback((params: any) => {
         if (!selectionStart || !selectionEnd) return false;
+
 
         const api = params.api;
         if (!api) return false;
@@ -496,7 +511,7 @@ export const ProductionScheduler: React.FC = () => {
                 autoHeaderHeight: true,
                 cellClass: (params) => {
                     const exists = articles.some(a => a.codigoProgramacion === params.value);
-                    return exists ? 'font-bold' : 'bg-red-50 text-red-600';
+                    return (exists ? 'font-bold' : 'bg-red-50 text-red-600') + ' cell-mono';
                 }
             },
             {
@@ -530,6 +545,7 @@ export const ProductionScheduler: React.FC = () => {
                 wrapHeaderText: true,
                 autoHeaderHeight: true,
                 type: 'numericColumn',
+                cellClass: 'cell-mono',
                 valueParser: (params) => {
                     if (!params.newValue) return 0;
                     return parseFloat(String(params.newValue).replace(/,/g, ''));
@@ -541,6 +557,7 @@ export const ProductionScheduler: React.FC = () => {
                 width: 100,
                 wrapHeaderText: true,
                 autoHeaderHeight: true,
+                cellClass: 'cell-mono',
                 valueGetter: (params) => params.data?.calculatedPace?.toFixed(0) || 0
             },
             {
@@ -549,6 +566,7 @@ export const ProductionScheduler: React.FC = () => {
                 width: 90,
                 wrapHeaderText: true,
                 autoHeaderHeight: true,
+                cellClass: 'cell-mono',
                 valueGetter: (params) => ((params.data?.productionTimeMinutes || 0) / 60).toFixed(1)
             }
         ];
@@ -958,111 +976,123 @@ export const ProductionScheduler: React.FC = () => {
                 </div>
             )}
 
-            <div className="flex justify-between items-center p-3 bg-white border-b border-gray-200">
-                <div className="flex items-center gap-4">
-                    <h2 className="text-xl font-bold text-gray-800">Programación de Producción</h2>
+            {/* Header Section */}
+            <div className="flex flex-col gap-4 p-4 bg-white border-b border-gray-200">
 
-                    <div className="flex items-center gap-2 bg-gray-50 px-3 py-1 rounded border border-gray-200">
-                        <CalendarClock size={16} className="text-gray-500" />
-                        <span className="text-sm font-medium text-gray-600">Inicio:</span>
-                        <input
-                            type="datetime-local"
-                            className="bg-transparent text-sm font-bold text-gray-800 outline-none w-40"
-                            value={programStartDate ? format(new Date(programStartDate), "yyyy-MM-dd'T'HH:mm") : ''}
-                            onChange={handleDateChange}
-                        />
-                    </div>
-                    {programEndDate && (
-                        <div className="flex items-center gap-2 bg-blue-50 px-3 py-1 rounded border border-blue-200">
-                            <CalendarClock size={16} className="text-blue-500" />
-                            <span className="text-sm font-medium text-blue-600">Fin:</span>
-                            <span className="text-sm font-bold text-blue-800">
-                                {format(programEndDate, 'EEE dd/MM HH:mm', { locale: es })}
-                            </span>
+                {/* Top Row: Title & Date Controls (Informative) */}
+                <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-6">
+                        <h2 className="text-xl font-bold text-gray-800 tracking-tight">Programación de Producción</h2>
+
+                        <div className="h-6 w-px bg-gray-300 mx-2"></div>
+
+                        <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200 shadow-sm">
+                                <CalendarClock size={16} className="text-gray-500" />
+                                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Inicio</span>
+                                <input
+                                    type="datetime-local"
+                                    className="bg-transparent text-sm font-bold text-gray-900 outline-none w-36 font-mono"
+                                    value={programStartDate ? format(new Date(programStartDate), "yyyy-MM-dd'T'HH:mm") : ''}
+                                    onChange={handleDateChange}
+                                />
+                            </div>
+
+                            {programEndDate && (
+                                <div className="flex items-center gap-2 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-100 shadow-sm">
+                                    <span className="text-xs font-semibold text-blue-500 uppercase tracking-wide">Fin Est.</span>
+                                    <span className="text-sm font-bold text-blue-900 font-mono">
+                                        {format(programEndDate, 'EEE dd/MM HH:mm', { locale: es })}
+                                    </span>
+                                </div>
+                            )}
+
+                            {schedule.length > 0 && (
+                                <>
+                                    <div className="flex items-center gap-2 bg-green-50 px-3 py-1.5 rounded-lg border border-green-100 shadow-sm">
+                                        <span className="text-xs font-semibold text-green-600 uppercase tracking-wide">Prod</span>
+                                        <span className="text-sm font-bold text-green-800 font-mono">
+                                            {(schedule.reduce((acc, item) => acc + (item.productionTimeMinutes || 0), 0) / 60).toFixed(1)} h
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center gap-2 bg-red-50 px-3 py-1.5 rounded-lg border border-red-100 shadow-sm">
+                                        <span className="text-xs font-semibold text-red-600 uppercase tracking-wide">Paradas</span>
+                                        <span className="text-sm font-bold text-red-800 font-mono">
+                                            {((
+                                                schedule.reduce((acc, item) => {
+                                                    const manualStoppages = (item.changeoverMinutes || 0) +
+                                                        (item.qualityChangeMinutes || 0) +
+                                                        (item.stopChangeMinutes || 0) +
+                                                        (item.ringChangeMinutes || 0) +
+                                                        (item.channelChangeMinutes || 0) +
+                                                        (item.adjustmentMinutes || 0);
+
+                                                    const autoRingChange = (item.segments || [])
+                                                        .filter(seg => seg.type === 'ring_change')
+                                                        .reduce((segSum, seg) => segSum + seg.durationMinutes, 0);
+                                                    const autoChannelChange = (item.segments || [])
+                                                        .filter(seg => seg.type === 'channel_change')
+                                                        .reduce((segSum, seg) => segSum + seg.durationMinutes, 0);
+                                                    const autoMaintenance = (item.segments || [])
+                                                        .filter(seg => seg.type === 'maintenance_hp')
+                                                        .reduce((segSum, seg) => segSum + seg.durationMinutes, 0);
+
+                                                    return acc + manualStoppages + autoRingChange + autoChannelChange + autoMaintenance;
+                                                }, 0) +
+                                                schedule.reduce((acc, item) => acc + Object.values(item.stoppages || {}).reduce((s, v) => s + v, 0), 0)
+                                            ) / 60).toFixed(1)} h
+                                        </span>
+                                    </div>
+                                </>
+                            )}
                         </div>
-                    )}
+                    </div>
 
-                    {/* Header Totals */}
-                    {schedule.length > 0 && (
-                        <>
-                            <div className="flex items-center gap-2 bg-green-50 px-3 py-1 rounded border border-green-200 ml-4">
-                                <span className="text-sm font-medium text-green-700">Prod:</span>
-                                <span className="text-sm font-bold text-green-800">
-                                    {(schedule.reduce((acc, item) => acc + (item.productionTimeMinutes || 0), 0) / 60).toFixed(1)} h
-                                </span>
-                            </div>
-                            <div className="flex items-center gap-2 bg-red-50 px-3 py-1 rounded border border-red-200">
-                                <span className="text-sm font-medium text-red-700">Paradas:</span>
-                                <span className="text-sm font-bold text-red-800">
-                                    {((
-                                        schedule.reduce((acc, item) => {
-                                            // Manual stoppages from item fields
-                                            const manualStoppages = (item.changeoverMinutes || 0) +
-                                                (item.qualityChangeMinutes || 0) +
-                                                (item.stopChangeMinutes || 0) +
-                                                (item.ringChangeMinutes || 0) +
-                                                (item.channelChangeMinutes || 0) +
-                                                (item.adjustmentMinutes || 0);
-
-                                            // Automatic stoppages from segments (ring, channel, maintenance_hp)
-                                            const autoRingChange = (item.segments || [])
-                                                .filter(seg => seg.type === 'ring_change')
-                                                .reduce((segSum, seg) => segSum + seg.durationMinutes, 0);
-                                            const autoChannelChange = (item.segments || [])
-                                                .filter(seg => seg.type === 'channel_change')
-                                                .reduce((segSum, seg) => segSum + seg.durationMinutes, 0);
-                                            const autoMaintenance = (item.segments || [])
-                                                .filter(seg => seg.type === 'maintenance_hp')
-                                                .reduce((segSum, seg) => segSum + seg.durationMinutes, 0);
-
-                                            return acc + manualStoppages + autoRingChange + autoChannelChange + autoMaintenance;
-                                        }, 0) +
-                                        schedule.reduce((acc, item) => acc + Object.values(item.stoppages || {}).reduce((s, v) => s + v, 0), 0)
-                                    ) / 60).toFixed(1)} h
-                                </span>
-                            </div>
-                        </>
-                    )}
+                    {/* Auto-save Status */}
+                    <span className="text-xs text-green-600 flex items-center gap-1.5 px-3 py-1 bg-green-50 rounded-full border border-green-100 font-medium ml-auto mr-6">
+                        <span className="relative flex h-2 w-2">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                        </span>
+                        Guardado automático
+                    </span>
                 </div>
 
-                <div className="flex gap-2">
-                    {/* Peak Hour Filter Toggle */}
+                {/* Bottom Row: Actions (Compact) */}
+                <div className="flex items-center justify-end gap-2 border-t border-gray-100 pt-3">
+                    <div className="flex items-center gap-1 mr-auto">
+                        <button
+                            onClick={handleSaveColumnLayout}
+                            className={`p-2 rounded-lg transition-colors ${layoutSaved
+                                ? 'bg-green-100 text-green-700'
+                                : 'text-gray-500 hover:bg-gray-100 hover:text-blue-600'
+                                }`}
+                            title="Guardar distribución de columnas"
+                        >
+                            <Save size={18} />
+                        </button>
+                        <button
+                            onClick={handleResetColumnLayout}
+                            className="p-2 text-gray-500 hover:bg-gray-100 hover:text-blue-600 rounded-lg transition-colors"
+                            title="Restaurar distribución por defecto"
+                        >
+                            <RotateCcw size={18} />
+                        </button>
+                    </div>
 
+                    <div className="h-6 w-px bg-gray-200 mx-2"></div>
 
-                    {/* Visual indicator of auto-save */}
-                    <span className="text-xs text-green-600 flex items-center px-2 bg-green-50 rounded border border-green-100">
-                        ✓ Guardado automático
-                    </span>
-
-                    {/* Guardar/Restaurar distribución de columnas */}
-                    <button
-                        onClick={handleSaveColumnLayout}
-                        className={`flex items-center gap-1 px-3 py-2 rounded shadow-sm transition text-sm ${layoutSaved
-                            ? 'bg-green-100 text-green-700 border border-green-300'
-                            : 'bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100'
-                            }`}
-                        title="Guardar la distribución actual de columnas (anchos, orden)"
-                    >
-                        <Save size={16} />
-                        {layoutSaved ? '¡Guardado!' : 'Guardar Distribución'}
-                    </button>
-                    <button
-                        onClick={handleResetColumnLayout}
-                        className="flex items-center gap-1 bg-gray-50 text-gray-600 border border-gray-200 px-3 py-2 rounded shadow-sm hover:bg-gray-100 transition text-sm"
-                        title="Restaurar distribución de columnas por defecto"
-                    >
-                        <RotateCcw size={16} />
-                    </button>
-
-                    {/* Undo Button */}
                     <button
                         onClick={undo}
                         disabled={!canUndo()}
-                        className={`flex items-center gap-1 px-3 py-2 rounded shadow-sm transition ${canUndo()
-                            ? 'bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100'
-                            : 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed'
-                            }`}
-                        title={`Deshacer último cambio (${scheduleHistory.length} disponibles)`}
+                        className={`
+                            flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all
+                            ${canUndo()
+                                ? 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200'
+                                : 'bg-gray-50 text-gray-300 border border-gray-100 cursor-not-allowed'
+                            }
+                        `}
+                        title="Deshacer último cambio"
                     >
                         <Undo2 size={16} />
                         Deshacer {scheduleHistory.length > 0 && `(${scheduleHistory.length})`}
@@ -1070,10 +1100,11 @@ export const ProductionScheduler: React.FC = () => {
 
                     <button
                         onClick={handleClearAll}
-                        className="flex items-center gap-1 bg-red-50 text-red-600 border border-red-200 px-3 py-2 rounded shadow-sm hover:bg-red-100 transition mr-2"
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white text-gray-500 border border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all"
                         title="Borrar toda la tabla"
                     >
-                        <Trash2 size={16} /> Limpiar Todo
+                        <Trash2 size={16} />
+                        Limpiar
                     </button>
                 </div>
             </div>
@@ -1088,18 +1119,21 @@ export const ProductionScheduler: React.FC = () => {
                     rowSelection="multiple"
                     rowDragMultiRow={true}
                     rowDragEntireRow={false}
-                    suppressRowClickSelection={true} // Disable row selection on click to favor cell selection
+                    suppressRowClickSelection={true}
                     onRowDragEnd={onRowDragEnd}
                     onCellValueChanged={onCellValueChanged}
-                    onCellContextMenu={onCellContextMenu} // Custom Context Menu event
-                    onCellMouseDown={onCellMouseDown} // Start selection logic
-                    onCellMouseOver={onCellMouseOver} // Drag selection logic
-                    preventDefaultOnContextMenu={true} // Prevent browser menu
+                    onCellContextMenu={onCellContextMenu}
+                    onCellMouseDown={onCellMouseDown}
+                    onCellMouseOver={onCellMouseOver}
+                    preventDefaultOnContextMenu={true}
                     animateRows={true}
                     getRowId={(params) => params.data.id}
                     pinnedBottomRowData={pinnedBottomRowData}
                     onGridReady={onGridReady}
                     onCellDoubleClicked={onCellDoubleClicked}
+                    rowClassRules={rowClassRules}
+                    rowHeight={32}
+                    headerHeight={48}
                 />
             </div>
 

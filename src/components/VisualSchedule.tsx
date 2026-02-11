@@ -285,28 +285,23 @@ export const VisualSchedule: React.FC = () => {
             <style>{`
 @media print {
     @page { margin: 1cm; size: A4 portrait; }
-    html, body, #root, .app - container {
-        height: auto!important;
-        min - height: 100 % !important;
-        overflow: visible!important;
-        display: block!important;
-        background: white!important;
+    html, body, #root, .app-container {
+        height: auto !important;
+        min-height: 100% !important;
+        overflow: visible !important;
+        display: block !important;
+        background: white !important;
     }
-                    div {
-        display: block!important;
-        height: auto!important;
-        position: static!important;
-        overflow: visible!important;
+
+    table {
+        width: 100% !important;
+        table-layout: fixed !important;
+        border-collapse: collapse !important;
     }
-                    table {
-        width: 100 % !important;
-        table - layout: fixed!important;
-        border - collapse: collapse!important;
-    }
-                    thead { display: table - header - group!important; }
-                    tfoot { display: table - footer - group!important; }
-    tr, td, th { page -break-inside: avoid!important; break-inside: avoid!important; }
-    button, nav, header: not(.print - header) { display: none!important; }
+    thead { display: table-header-group !important; }
+    tfoot { display: table-footer-group !important; }
+    tr, td, th { page-break-inside: avoid !important; break-inside: avoid !important; }
+    button, nav, header:not(.print-header) { display: none !important; }
 }
 `}</style>
 
