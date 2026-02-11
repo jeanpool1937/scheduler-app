@@ -7,7 +7,7 @@ import { useArticleStore } from '../store/useArticleStore';
 import type { ProductionScheduleItem } from '../types';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Plus, Trash2, CalendarClock, Undo2, Save, RotateCcw, Eye } from 'lucide-react';
+import { Plus, Trash2, CalendarClock, Undo2, RotateCcw, Eye } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { TargetDateModal } from './TargetDateModal';
 
@@ -55,10 +55,35 @@ export const ProductionScheduler: React.FC = () => {
         return () => window.removeEventListener('mouseup', handleMouseUp);
     }, []);
 
+    // Helper to format values for clipboard
+    const getFormattedValue = useCallback((api: any, rowNode: any, col: any) => {
+        const colDef = col.getColDef();
+        let value = api.getCellValue({ rowNode, colId: col.getColId() });
+
+        if (colDef.valueFormatter) {
+            value = colDef.valueFormatter({
+                value,
+                data: rowNode.data,
+                node: rowNode,
+                colDef,
+                api,
+                column: col,
+                context: api.getGridOption('context')
+            });
+        }
+        return value;
+    }, []);
+
     // Copy Handler
     React.useEffect(() => {
         const handleCopy = (e: ClipboardEvent) => {
             if (!selectionStart || !selectionEnd || !gridRef.current?.api) return;
+
+            // Check if we are focusing an input outside the grid
+            const activeElement = document.activeElement;
+            const isGridFocused = activeElement?.closest('.ag-theme-quartz') || activeElement === document.body;
+
+            if (!isGridFocused && activeElement?.tagName === 'INPUT') return;
 
             const api = gridRef.current.api;
             // Use displayed columns to respect user reordering
@@ -84,8 +109,7 @@ export const ProductionScheduler: React.FC = () => {
                 const rowCells: string[] = [];
                 for (let c = minColIdx; c <= maxColIdx; c++) {
                     const col = displayedColumns[c];
-                    // Fix: getCellValue signature safety
-                    const val = api.getCellValue({ rowNode, colId: col.getColId() } as any);
+                    const val = getFormattedValue(api, rowNode, col);
                     rowCells.push(val != null ? String(val) : '');
                 }
                 rows.push(rowCells.join('\t'));
@@ -102,7 +126,7 @@ export const ProductionScheduler: React.FC = () => {
 
         document.addEventListener('copy', handleCopy as any);
         return () => document.removeEventListener('copy', handleCopy as any);
-    }, [selectionStart, selectionEnd]);
+    }, [selectionStart, selectionEnd, getFormattedValue]);
 
     const onCellMouseDown = useCallback((params: any) => {
         // Start selection
@@ -180,9 +204,6 @@ export const ProductionScheduler: React.FC = () => {
             'cell-selected': getCellClassRequest
         }
     }), [getCellClassRequest]);
-
-    // Estado para feedback visual al guardar distribución
-    const [layoutSaved, setLayoutSaved] = useState(false);
 
     // Close menu on global click
     React.useEffect(() => {
@@ -324,15 +345,10 @@ export const ProductionScheduler: React.FC = () => {
         setEditingValue('');
     };
 
-    // Guardar distribución de columnas en localStorage
-    const handleSaveColumnLayout = useCallback(() => {
-        const api = gridRef.current?.api;
-        if (!api) return;
-
-        const columnState = api.getColumnState();
+    // Guardar distribución de columnas en localStorage (Auto-save)
+    const onColumnStateChanged = useCallback((params: any) => {
+        const columnState = params.columnApi.getColumnState();
         localStorage.setItem(COLUMN_STATE_KEY, JSON.stringify(columnState));
-        setLayoutSaved(true);
-        setTimeout(() => setLayoutSaved(false), 2000);
     }, []);
 
     // Restaurar distribución de columnas por defecto
@@ -342,7 +358,6 @@ export const ProductionScheduler: React.FC = () => {
 
         localStorage.removeItem(COLUMN_STATE_KEY);
         api.resetColumnState();
-        setLayoutSaved(false);
     }, []);
 
     // Calculate program end date from last schedule item
@@ -1062,16 +1077,6 @@ export const ProductionScheduler: React.FC = () => {
                 <div className="flex items-center justify-end gap-2 border-t border-gray-100 pt-3">
                     <div className="flex items-center gap-1 mr-auto">
                         <button
-                            onClick={handleSaveColumnLayout}
-                            className={`p-2 rounded-lg transition-colors ${layoutSaved
-                                ? 'bg-green-100 text-green-700'
-                                : 'text-gray-500 hover:bg-gray-100 hover:text-blue-600'
-                                }`}
-                            title="Guardar distribución de columnas"
-                        >
-                            <Save size={18} />
-                        </button>
-                        <button
                             onClick={handleResetColumnLayout}
                             className="p-2 text-gray-500 hover:bg-gray-100 hover:text-blue-600 rounded-lg transition-colors"
                             title="Restaurar distribución por defecto"
@@ -1120,6 +1125,7 @@ export const ProductionScheduler: React.FC = () => {
                     rowDragMultiRow={true}
                     rowDragEntireRow={false}
                     suppressRowClickSelection={true}
+                    suppressCopyRowsToClipboard={true}
                     onRowDragEnd={onRowDragEnd}
                     onCellValueChanged={onCellValueChanged}
                     onCellContextMenu={onCellContextMenu}
@@ -1134,6 +1140,11 @@ export const ProductionScheduler: React.FC = () => {
                     rowClassRules={rowClassRules}
                     rowHeight={32}
                     headerHeight={48}
+                    // Auto-save triggers
+                    onColumnResized={onColumnStateChanged}
+                    onColumnMoved={onColumnStateChanged}
+                    onColumnVisible={onColumnStateChanged}
+                    onColumnPinned={onColumnStateChanged}
                 />
             </div>
 
