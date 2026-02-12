@@ -18,6 +18,15 @@ export interface StoppageConfig {
   colId: string; // For AG Grid column mapping
 }
 
+export type ProcessId = 'laminador1' | 'laminador2' | 'laminador3';
+
+export interface ProcessConfig {
+  id: ProcessId;
+  name: string;
+  label: string; // Display name
+  description?: string;
+}
+
 export type SegmentType =
   | 'production'
   | 'changeover'        // R1: Cambio de medida (duración de matriz)
@@ -72,15 +81,32 @@ export interface ProductionScheduleItem {
   }[];
 }
 
-export interface AppState {
+// ... imports
+
+export interface ProcessData {
   schedule: ProductionScheduleItem[];
   stoppageConfigs: StoppageConfig[];
   programStartDate: Date;
-  columnLabels: Record<string, string>; // Custom column labels
-  scheduleHistory: ProductionScheduleItem[][]; // Undo history (max 5)
-  holidays: string[]; // Array of ISO date strings (YYYY-MM-DD)
+  columnLabels: Record<string, string>;
+  scheduleHistory: ProductionScheduleItem[][];
+  holidays: string[];
+  manualStops: ManualStop[];
 
-  // Actions
+  // Navigation/Visual State specific to process
+  visualTargetDate: Date | null;
+}
+
+export interface AppState {
+  // Global State
+  activeProcessId: ProcessId;
+  processes: Record<ProcessId, ProcessData>;
+
+  // Actions (global)
+  setActiveProcess: (id: ProcessId) => void;
+  setActiveTab: (tab: 'scheduler' | 'visual' | 'database' | 'settings') => void;
+  setVisualTargetDate: (date: Date | null) => void;
+
+  // Actions (delegated to active process)
   addScheduleItem: (item: Omit<ProductionScheduleItem, 'id' | 'sequenceOrder'>) => void;
   insertScheduleItem: (index: number, item: ProductionScheduleItem) => void;
   addScheduleItems: (items: ProductionScheduleItem[]) => void;
@@ -113,15 +139,11 @@ export interface AppState {
   isHoliday: (date: Date) => boolean;
 
   // Manual Stops
-  // Navigation State
-  activeTab: 'scheduler' | 'visual' | 'database' | 'settings';
-  visualTargetDate: Date | null;
-  setActiveTab: (tab: 'scheduler' | 'visual' | 'database' | 'settings') => void;
-  setVisualTargetDate: (date: Date | null) => void;
-
-  manualStops: ManualStop[];
   addManualStop: (stop: ManualStop) => void;
   updateManualStop: (id: string, stop: Partial<ManualStop>) => void;
   deleteManualStop: (id: string) => void;
   setManualStops: (stops: ManualStop[]) => void;
+
+  // UI State (Global)
+  activeTab: 'scheduler' | 'visual' | 'database' | 'settings';
 }

@@ -15,27 +15,35 @@ import { TargetDateModal } from './TargetDateModal';
 const COLUMN_STATE_KEY = 'scheduler-column-state';
 
 export const ProductionScheduler: React.FC = () => {
+    const activeProcessId = useStore((state) => state.activeProcessId);
+    const processData = useStore((state) => state.processes[state.activeProcessId]);
+
     const {
         schedule,
         stoppageConfigs,
+        programStartDate,
+        scheduleHistory,
+        columnLabels
+    } = processData;
+
+    const {
         insertScheduleItem,
         addScheduleItems,
         updateScheduleItem,
         deleteScheduleItem,
         clearSchedule,
         reorderSchedule,
-        programStartDate,
         setProgramStartDate,
         recalculateSchedule,
         undo,
         canUndo,
-        scheduleHistory,
-        columnLabels,
         setColumnLabel,
         updateItemEndTime,
         setActiveTab,
         setVisualTargetDate
     } = useStore();
+
+    const articles = useArticleStore((state) => state.getArticles(activeProcessId));
 
     // Context Menu State
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; rowIndex: number; rowId: string } | null>(null);
@@ -277,8 +285,6 @@ export const ProductionScheduler: React.FC = () => {
     }, [recalculateSchedule]);
 
     // Use Articles as the master data
-    // Use Articles as the master data
-    const { articles } = useArticleStore();
 
     const onCellDoubleClicked = useCallback((params: any) => {
         if (params.colDef.colId === 'endTime' && params.data) {

@@ -5,7 +5,8 @@ import { es } from 'date-fns/locale';
 import { Calendar, Trash2, Plus } from 'lucide-react';
 
 export const HolidayConfig: React.FC = () => {
-    const { holidays, addHoliday, removeHoliday } = useStore();
+    const { holidays } = useStore((state) => state.processes[state.activeProcessId]);
+    const { addHoliday, removeHoliday } = useStore();
     const [newHolidayInput, setNewHolidayInput] = useState('');
     const [error, setError] = useState('');
 

@@ -1,4 +1,3 @@
-
 import 'ag-grid-community/styles/ag-grid.css'; // Core grid CSS, always needed
 import 'ag-grid-community/styles/ag-theme-quartz.css'; // Theme
 import { DatabaseLayout } from './components/DatabaseLayout';

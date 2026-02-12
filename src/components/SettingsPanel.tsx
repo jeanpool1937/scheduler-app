@@ -8,20 +8,28 @@ import { HolidayConfig } from './HolidayConfig';
 import { ManualStopsConfig } from './ManualStopsConfig';
 
 export const SettingsPanel: React.FC = () => {
+    const activeProcessId = useStore((state) => state.activeProcessId);
+    const processData = useStore((state) => state.processes[state.activeProcessId]);
+
     const {
         stoppageConfigs,
         programStartDate,
         columnLabels,
         schedule,
-        manualStops,
+        manualStops
+    } = processData;
+
+    const {
         setStoppageConfigs,
         setProgramStartDate,
         importColumnLabels,
         setSchedule,
         setManualStops
     } = useStore();
-    const { articles, setArticles } = useArticleStore();
-    const { rules: changeovers, setRules } = useChangeoverStore();
+    const articles = useArticleStore((state) => state.getArticles(activeProcessId));
+    const setArticles = useArticleStore((state) => state.setArticles);
+    const changeovers = useChangeoverStore((state) => state.getRules(activeProcessId));
+    const setRules = useChangeoverStore((state) => state.setRules);
 
     const handleExportBackup = () => {
         const fullBackup = {
@@ -92,10 +100,10 @@ export const SettingsPanel: React.FC = () => {
 
                 // Import databases
                 if (backup.database.articles) {
-                    setArticles(backup.database.articles);
+                    setArticles(activeProcessId, backup.database.articles);
                 }
                 if (backup.database.changeovers) {
-                    setRules(backup.database.changeovers);
+                    setRules(activeProcessId, backup.database.changeovers);
                 }
 
                 alert('✅ Datos importados correctamente. La aplicación se recargará.');

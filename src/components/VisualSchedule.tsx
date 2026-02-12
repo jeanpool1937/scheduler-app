@@ -31,8 +31,12 @@ interface DailySchedule {
 }
 
 export const VisualSchedule: React.FC = () => {
-    const { schedule, isHoliday, visualTargetDate, setVisualTargetDate } = useStore();
-    const { articles } = useArticleStore();
+    const activeProcessId = useStore((state) => state.activeProcessId);
+    const processData = useStore((state) => state.processes[state.activeProcessId]);
+    const { schedule, visualTargetDate } = processData;
+    const { isHoliday, setVisualTargetDate } = useStore();
+
+    const articles = useArticleStore((state) => state.getArticles(activeProcessId));
     const [showPeakHoursOnly, setShowPeakHoursOnly] = React.useState(false);
     const [isFilterOpen, setIsFilterOpen] = React.useState(false);
     const [selectedTypes, setSelectedTypes] = React.useState<Set<string>>(new Set(['all']));

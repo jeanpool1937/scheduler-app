@@ -3,7 +3,7 @@ import { useStore } from '../store/useStore';
 import { Weight, TrendingUp, AlertTriangle } from 'lucide-react';
 
 export const KPIDashboard: React.FC = () => {
-    const { schedule } = useStore();
+    const { schedule } = useStore((state) => state.processes[state.activeProcessId]);
 
     const stats = useMemo(() => {
         const totalTons = schedule.reduce((sum, item) => sum + (item.quantity || 0), 0);

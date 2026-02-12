@@ -9,8 +9,12 @@ import { useChangeoverStore } from '../store/useChangeoverStore';
 import type { ChangeoverRule } from '../types/changeover';
 import { Upload, Plus, Trash2, Download } from 'lucide-react';
 
+import { useStore } from '../store/useStore';
+
 export const ChangeoverMaster: React.FC = () => {
-    const { rules, setRules, addRule, updateRule, deleteRules } = useChangeoverStore();
+    const activeProcessId = useStore((state) => state.activeProcessId);
+    const rules = useChangeoverStore((state) => state.getRules(activeProcessId));
+    const { setRules, addRule, updateRule, deleteRules } = useChangeoverStore();
     const gridRef = useRef<AgGridReact>(null);
     const [gridApi, setGridApi] = useState<GridApi | null>(null);
 
@@ -87,7 +91,7 @@ export const ChangeoverMaster: React.FC = () => {
                 }
             }
 
-            setRules(newRules);
+            setRules(activeProcessId, newRules);
         };
         reader.readAsBinaryString(file);
         e.target.value = '';
@@ -95,7 +99,7 @@ export const ChangeoverMaster: React.FC = () => {
 
     const handleCellValueChanged = (event: CellValueChangedEvent) => {
         if (event.rowIndex !== null) {
-            updateRule(event.rowIndex, event.data);
+            updateRule(activeProcessId, event.rowIndex, event.data);
         }
     };
 
@@ -105,7 +109,7 @@ export const ChangeoverMaster: React.FC = () => {
             toId: '',
             durationHours: 0
         };
-        addRule(newRule);
+        addRule(activeProcessId, newRule);
         setTimeout(() => {
             gridApi?.ensureIndexVisible(rules.length - 1);
         }, 100);
@@ -115,7 +119,7 @@ export const ChangeoverMaster: React.FC = () => {
         const selectedNodes = gridApi?.getSelectedNodes();
         if (selectedNodes && selectedNodes.length > 0) {
             const indicesToRemove = selectedNodes.map(node => node.rowIndex).filter(i => i !== null) as number[];
-            deleteRules(indicesToRemove);
+            deleteRules(activeProcessId, indicesToRemove);
             gridApi?.deselectAll();
         }
     };

@@ -14,8 +14,12 @@ import { useArticleStore } from '../store/useArticleStore';
 import type { Article } from '../types/article';
 import { Upload, Plus, Trash2, Download } from 'lucide-react';
 
+import { useStore } from '../store/useStore';
+
 export const ArticleMaster: React.FC = () => {
-    const { articles, setArticles, addArticle, updateArticle, deleteArticles } = useArticleStore();
+    const activeProcessId = useStore((state) => state.activeProcessId);
+    const articles = useArticleStore((state) => state.getArticles(activeProcessId));
+    const { setArticles, addArticle, updateArticle, deleteArticles } = useArticleStore();
     const gridRef = useRef<AgGridReact>(null);
     const [gridApi, setGridApi] = useState<GridApi | null>(null);
 
@@ -107,7 +111,7 @@ export const ArticleMaster: React.FC = () => {
                 return article as Article;
             }).filter(a => a.skuLaminacion); // Filter empty rows
 
-            setArticles(newArticles);
+            setArticles(activeProcessId, newArticles);
         };
         reader.readAsBinaryString(file);
         // Reset input
@@ -116,7 +120,7 @@ export const ArticleMaster: React.FC = () => {
 
     const handleCellValueChanged = (event: CellValueChangedEvent) => {
         if (event.rowIndex !== null) {
-            updateArticle(event.rowIndex, event.data);
+            updateArticle(activeProcessId, event.rowIndex, event.data);
         }
     };
 
@@ -127,7 +131,7 @@ export const ArticleMaster: React.FC = () => {
             fam: '', aciertoCalibracion: 0, idTablaCambioMedida: '', pesoPalanquilla: 0,
             almacenDestino: '', comentarios: ''
         };
-        addArticle(newArticle);
+        addArticle(activeProcessId, newArticle);
         // Optional: Scroll to bottom
         setTimeout(() => {
             gridApi?.ensureIndexVisible(articles.length - 1);
@@ -140,7 +144,7 @@ export const ArticleMaster: React.FC = () => {
             const indicesToRemove = selectedNodes.map(node => node.rowIndex).filter(i => i !== null) as number[];
             // Sort in descending order to avoid index shifting issues if we deleted one by one, 
             // but store's deleteArticles handles array of indices logic.
-            deleteArticles(indicesToRemove);
+            deleteArticles(activeProcessId, indicesToRemove);
             gridApi?.deselectAll();
         }
     };

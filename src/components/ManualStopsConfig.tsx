@@ -6,7 +6,8 @@ import { v4 as uuidv4 } from 'uuid';
 import type { ManualStop } from '../types';
 
 export const ManualStopsConfig: React.FC = () => {
-    const { manualStops, addManualStop, deleteManualStop } = useStore();
+    const { manualStops } = useStore((state) => state.processes[state.activeProcessId]);
+    const { addManualStop, deleteManualStop } = useStore();
 
     const [newStop, setNewStop] = useState<{
         date: string;
