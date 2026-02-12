@@ -318,6 +318,9 @@ export const useStore = create<AppState & CalendarState>()(
                 set({ manualStops: newStops });
                 get().recalculateSchedule();
             },
+            setManualStops: (stops: { id: string; start: Date; durationMinutes: number; label: string }[]) => {
+                set({ manualStops: stops });
+            },
 
             // Reverse Calculation: Set End Date -> Calculate Quantity
             updateItemEndTime: (itemId: string, targetEndDate: Date) => {
@@ -422,9 +425,26 @@ export const useStore = create<AppState & CalendarState>()(
                 programStartDate: state.programStartDate,
                 columnLabels: state.columnLabels,
                 holidays: state.holidays,
+                manualStops: state.manualStops,
 
                 // Note: scheduleHistory is NOT persisted (transient)
             }),
+            merge: (persistedState: any, currentState) => {
+                const merged = { ...currentState, ...persistedState };
+
+                // Rehydrate Date objects from JSON strings
+                if (merged.programStartDate && typeof merged.programStartDate === 'string') {
+                    merged.programStartDate = new Date(merged.programStartDate);
+                }
+                if (merged.manualStops && Array.isArray(merged.manualStops)) {
+                    merged.manualStops = merged.manualStops.map((s: any) => ({
+                        ...s,
+                        start: typeof s.start === 'string' ? new Date(s.start) : s.start
+                    }));
+                }
+
+                return merged;
+            },
         }
     )
 );

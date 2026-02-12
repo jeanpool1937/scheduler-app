@@ -3,7 +3,8 @@ import { useStore } from '../store/useStore';
 import { useArticleStore } from '../store/useArticleStore';
 import { format, addDays, startOfDay, endOfDay, differenceInMinutes, differenceInMilliseconds, isAfter, isBefore } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Printer, Zap, Filter, Check, ChevronDown } from 'lucide-react';
+import { Printer, Zap, Filter, Check, ChevronDown, FileSpreadsheet } from 'lucide-react';
+import { exportScheduleToExcel, exportMonthlyPlanReport } from '../utils/excelExport';
 import type { SegmentType } from '../types';
 
 interface DailyEvent {
@@ -212,6 +213,42 @@ export const VisualSchedule: React.FC = () => {
         window.print();
     };
 
+    const handleExportExcel = async () => {
+        try {
+            // Enrich data with actual Article Descriptions for Production events
+            const enrichedDailySchedules = dailySchedules.map(day => ({
+                ...day,
+                events: day.events.map(ev => {
+                    if (ev.type === 'production' && ev.skuCode) {
+                        const article = articles.find(a => a.codigoProgramacion === ev.skuCode);
+                        return {
+                            ...ev,
+                            description: article ? article.descripcion : ev.description
+                        };
+                    }
+                    return ev;
+                })
+            }));
+
+            await exportScheduleToExcel({
+                dailySchedules: enrichedDailySchedules,
+                monthlyTotals
+            });
+        } catch (error) {
+            console.error("Export Error:", error);
+            alert("Hubo un error al exportar a Excel. Revisa la consola para más detalles.");
+        }
+    };
+
+    const handleExportMonthlyPlan = async () => {
+        try {
+            await exportMonthlyPlanReport(dailySchedules, articles);
+        } catch (error) {
+            console.error("Export Plan Error:", error);
+            alert("Hubo un error al exportar el Plan Mensual. Revisa la consola.");
+        }
+    };
+
     // Calculate Monthly Totals for the new compact Header
     const monthlyTotals = dailySchedules.reduce((acc, day) => ({
         tonnage: acc.tonnage + day.totalTonnage,
@@ -374,6 +411,20 @@ export const VisualSchedule: React.FC = () => {
                             <div className="fixed inset-0 z-40" onClick={() => setIsFilterOpen(false)} />
                         )}
                     </div>
+
+                    <button
+                        onClick={handleExportExcel}
+                        className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded text-xs font-bold hover:bg-green-700 transition shadow"
+                    >
+                        <FileSpreadsheet size={16} /> EXCEL
+                    </button>
+
+                    <button
+                        onClick={handleExportMonthlyPlan}
+                        className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded text-xs font-bold hover:bg-teal-700 transition shadow"
+                    >
+                        <FileSpreadsheet size={16} /> PLAN MENSUAL
+                    </button>
 
                     <button
                         onClick={handlePrint}

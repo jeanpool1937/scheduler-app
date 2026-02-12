@@ -7,7 +7,7 @@ import { useArticleStore } from '../store/useArticleStore';
 import type { ProductionScheduleItem } from '../types';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Plus, Trash2, CalendarClock, Undo2, RotateCcw, Eye } from 'lucide-react';
+import { Plus, Trash2, CalendarClock, Undo2, RotateCcw, Eye, Save, Columns } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { TargetDateModal } from './TargetDateModal';
 
@@ -297,42 +297,45 @@ export const ProductionScheduler: React.FC = () => {
     const [editingHeader, setEditingHeader] = useState<{ field: string; defaultLabel: string } | null>(null);
     const [editingValue, setEditingValue] = useState('');
 
-    // Handler for grid ready - attach double-click listener to headers
+    // Handler for grid ready
     const onGridReady = useCallback((event: GridReadyEvent) => {
-        const gridDiv = document.querySelector('.ag-theme-quartz');
-        if (!gridDiv) return;
-
-        gridDiv.addEventListener('dblclick', (e: Event) => {
-            const target = e.target as HTMLElement;
-            const headerCell = target.closest('.ag-header-cell');
-            if (headerCell) {
-                const colId = headerCell.getAttribute('col-id');
-                const headerText = headerCell.querySelector('.ag-header-cell-text')?.textContent || '';
-                if (colId && colId !== '' && colId !== 'undefined') {
-                    setEditingHeader({ field: colId, defaultLabel: headerText });
-                    setEditingValue(columnLabels[colId] || headerText);
-                }
-            }
-        });
-
-        // Restaurar estado de columnas guardado en localStorage
+        // Restore column state
         try {
             const savedState = localStorage.getItem(COLUMN_STATE_KEY);
             if (savedState) {
                 let columnState = JSON.parse(savedState);
                 if (Array.isArray(columnState)) {
-                    // Remove sort from sequenceOrder to fix drag and drop issues caused by legacy state
-                    columnState = columnState.map((col: any) => {
-                        if (col.colId === 'sequenceOrder') {
-                            return { ...col, sort: null };
-                        }
-                        return col;
-                    });
+                    // Filter out columns that don't exist anymore to prevent errors
+                    const currentCols = event.api.getColumns()?.map(c => c.getColId());
+                    if (currentCols) {
+                        columnState = columnState.filter((c: any) => currentCols.includes(c.colId));
+                    }
+                    event.api.applyColumnState({ state: columnState, applyOrder: true });
                 }
-                event.api.applyColumnState({ state: columnState, applyOrder: true });
+            } else {
+                // If no saved state, auto-size fit content
+                event.api.autoSizeAllColumns();
             }
         } catch (e) {
-            console.warn('No se pudo restaurar el estado de columnas:', e);
+            console.warn('Failed to restore column state:', e);
+            event.api.autoSizeAllColumns();
+        }
+
+        // Attach double click listener
+        const gridDiv = document.querySelector('.ag-theme-quartz');
+        if (gridDiv) {
+            gridDiv.addEventListener('dblclick', (e: Event) => {
+                const target = e.target as HTMLElement;
+                const headerCell = target.closest('.ag-header-cell');
+                if (headerCell) {
+                    const colId = headerCell.getAttribute('col-id');
+                    const headerText = headerCell.querySelector('.ag-header-cell-text')?.textContent || '';
+                    if (colId && colId !== '' && colId !== 'undefined') {
+                        setEditingHeader({ field: colId, defaultLabel: headerText });
+                        setEditingValue(columnLabels[colId] || headerText);
+                    }
+                }
+            });
         }
     }, [columnLabels]);
 
@@ -347,8 +350,23 @@ export const ProductionScheduler: React.FC = () => {
 
     // Guardar distribución de columnas en localStorage (Auto-save)
     const onColumnStateChanged = useCallback((params: any) => {
-        const columnState = params.columnApi.getColumnState();
+        const columnState = params.api.getColumnState();
         localStorage.setItem(COLUMN_STATE_KEY, JSON.stringify(columnState));
+    }, []);
+
+    // Guardar distribución manualmente
+    const handleSaveColumnLayout = useCallback(() => {
+        const api = gridRef.current?.api;
+        if (!api) return;
+        const columnState = api.getColumnState();
+        localStorage.setItem(COLUMN_STATE_KEY, JSON.stringify(columnState));
+    }, []);
+
+    // Auto-ajustar anchos de columna al contenido
+    const handleAutoSizeColumns = useCallback(() => {
+        const api = gridRef.current?.api;
+        if (!api) return;
+        api.autoSizeAllColumns();
     }, []);
 
     // Restaurar distribución de columnas por defecto
@@ -358,6 +376,8 @@ export const ProductionScheduler: React.FC = () => {
 
         localStorage.removeItem(COLUMN_STATE_KEY);
         api.resetColumnState();
+        // Auto-size after reset
+        setTimeout(() => api.autoSizeAllColumns(), 100);
     }, []);
 
     // Calculate program end date from last schedule item
@@ -478,9 +498,25 @@ export const ProductionScheduler: React.FC = () => {
                         if (mins > 0 && item.skuCode) breakdown[item.skuCode] = (breakdown[item.skuCode] || 0) + mins;
                     });
                     return Object.entries(breakdown).sort(([, a], [, b]) => b - a).map(([s, m]) => `${s}: ${Math.round(m)} min`).join('\n');
+                })(),
+                // Breakdown de Otros (forced_stop) por SKU
+                otherMinutes: (() => {
+                    const breakdown: Record<string, number> = {};
+                    schedule.forEach(item => {
+                        const mins = (item.segments || []).filter(s => s.type === 'forced_stop').reduce((s, x) => s + x.durationMinutes, 0);
+                        if (mins > 0 && item.skuCode) breakdown[item.skuCode] = (breakdown[item.skuCode] || 0) + mins;
+                    });
+                    return Object.entries(breakdown).sort(([, a], [, b]) => b - a).map(([s, m]) => `${s}: ${Math.round(m)} min`).join('\n');
                 })()
             }
         };
+
+        // Add 'otherMinutes' property to totals object for the column to read
+        totals.otherMinutes = schedule.reduce((sum, item) => {
+            return sum + (item.segments || [])
+                .filter(seg => seg.type === 'forced_stop')
+                .reduce((segSum, seg) => segSum + seg.durationMinutes, 0);
+        }, 0);
 
         // Sum dynamic stoppages
         stoppageConfigs.forEach(conf => {
@@ -566,156 +602,9 @@ export const ProductionScheduler: React.FC = () => {
                     return parseFloat(String(params.newValue).replace(/,/g, ''));
                 }
             },
-            {
-                colId: 'ritmo',
-                headerName: getHeader('ritmo', 'Ritmo (T/H)'),
-                width: 100,
-                wrapHeaderText: true,
-                autoHeaderHeight: true,
-                cellClass: 'cell-mono',
-                valueGetter: (params) => params.data?.calculatedPace?.toFixed(0) || 0
-            },
-            {
-                colId: 'hTrab',
-                headerName: getHeader('hTrab', 'H-Trab'),
-                width: 90,
-                wrapHeaderText: true,
-                autoHeaderHeight: true,
-                cellClass: 'cell-mono',
-                valueGetter: (params) => ((params.data?.productionTimeMinutes || 0) / 60).toFixed(1)
-            }
         ];
 
-        // 2. Calculated Changeover Column
-        cols.push({
-            colId: 'changeoverMinutes',
-            headerName: getHeader('changeoverMinutes', 'Cambio \n(Auto)'),
-            width: 100,
-            wrapHeaderText: true,
-            autoHeaderHeight: true,
-            valueGetter: (params) => params.data?.changeoverMinutes ? `${Math.round(params.data.changeoverMinutes)} min` : '-',
-            cellStyle: (params) => params.data?.changeoverMinutes ? { color: '#e11d48', fontWeight: 'bold' } : undefined,
-            cellRenderer: totalTooltipRenderer
-        });
-
-        // 2.1 Calculated Quality Change Column
-        cols.push({
-            colId: 'qualityChangeMinutes',
-            headerName: getHeader('qualityChangeMinutes', 'Cambio \nCalidad'),
-            width: 100,
-            wrapHeaderText: true,
-            autoHeaderHeight: true,
-            valueGetter: (params) => params.data?.qualityChangeMinutes ? `${Math.round(params.data.qualityChangeMinutes)} min` : '-',
-            cellStyle: (params) => params.data?.qualityChangeMinutes ? { color: '#9d174d', fontWeight: 'bold' } : undefined,
-            cellRenderer: totalTooltipRenderer
-        });
-
-        // 2.2 Calculated Stop Change Column (Cambio de Tope)
-        cols.push({
-            colId: 'stopChangeMinutes',
-            headerName: getHeader('stopChangeMinutes', 'Cambio \nTope'),
-            width: 100,
-            wrapHeaderText: true,
-            autoHeaderHeight: true,
-            valueGetter: (params) => params.data?.stopChangeMinutes ? `${Math.round(params.data.stopChangeMinutes)} min` : '-',
-            cellStyle: (params) => params.data?.stopChangeMinutes ? { color: '#0d9488', fontWeight: 'bold' } : undefined,
-            cellRenderer: totalTooltipRenderer
-        });
-
-        // 2.3 Calculated Ring Change Column (Cambio de Anillo/caseta)
-        cols.push({
-            colId: 'ringChangeMinutes',
-            headerName: getHeader('ringChangeMinutes', 'Cambio \nAnillo'),
-            width: 100,
-            wrapHeaderText: true,
-            autoHeaderHeight: true,
-            valueGetter: (params) => {
-                const manual = params.data?.ringChangeMinutes || 0;
-                const auto = (params.data?.segments || []).filter((s: any) => s.type === 'ring_change').reduce((sum: number, s: any) => sum + s.durationMinutes, 0);
-                const total = manual + auto;
-                return total > 0 ? `${Math.round(total)} min` : '-';
-            },
-            cellStyle: (params) => {
-                const manual = params.data?.ringChangeMinutes || 0;
-                const auto = (params.data?.segments || []).filter((s: any) => s.type === 'ring_change').reduce((sum: number, s: any) => sum + s.durationMinutes, 0);
-                return (manual + auto) > 0 ? { color: '#7c3aed', fontWeight: 'bold' } : undefined;
-            },
-            cellRenderer: totalTooltipRenderer
-        });
-
-        // 2.4 Calculated Channel Change Column (Cambio de Canal)
-        cols.push({
-            colId: 'channelChangeMinutes',
-            headerName: getHeader('channelChangeMinutes', 'Cambio \nCanal'),
-            width: 100,
-            wrapHeaderText: true,
-            autoHeaderHeight: true,
-            valueGetter: (params) => {
-                const manual = params.data?.channelChangeMinutes || 0;
-                const auto = (params.data?.segments || []).filter((s: any) => s.type === 'channel_change').reduce((sum: number, s: any) => sum + s.durationMinutes, 0);
-                const total = manual + auto;
-                return total > 0 ? `${Math.round(total)} min` : '-';
-            },
-            cellStyle: (params) => {
-                const manual = params.data?.channelChangeMinutes || 0;
-                const auto = (params.data?.segments || []).filter((s: any) => s.type === 'channel_change').reduce((sum: number, s: any) => sum + s.durationMinutes, 0);
-                return (manual + auto) > 0 ? { color: '#ea580c', fontWeight: 'bold' } : undefined;
-            },
-            cellRenderer: totalTooltipRenderer
-        });
-
-        // 2.5 Calculated Adjustment Column (Acierto)
-        cols.push({
-            colId: 'adjustmentMinutes',
-            headerName: getHeader('adjustmentMinutes', 'Acierto y Calibración'),
-            width: 130,
-            wrapHeaderText: true,
-            autoHeaderHeight: true,
-            valueGetter: (params) => params.data?.adjustmentMinutes ? `${Math.round(params.data.adjustmentMinutes)} min` : '-',
-            cellStyle: (params) => params.data?.adjustmentMinutes ? { color: '#ca8a04', fontWeight: 'bold' } : undefined,
-            cellRenderer: totalTooltipRenderer
-        });
-
-        // 3. Dynamic Stoppage Columns
-        stoppageConfigs.forEach(conf => {
-            cols.push({
-                headerName: conf.label,
-                colId: conf.id,
-                width: 100,
-                editable: true,
-                wrapHeaderText: true,
-                autoHeaderHeight: true,
-                type: 'numericColumn',
-                valueGetter: (params) => params.data?.stoppages?.[conf.id] || 0,
-                cellRenderer: totalTooltipRenderer,
-                valueSetter: (params: ValueSetterParams<ProductionScheduleItem>) => {
-                    const newVal = Number(String(params.newValue).replace(/,/g, ''));
-                    if (isNaN(newVal)) return false;
-
-                    // Direct manipulation for immediate UI response (React state updates later via event)
-                    const stoppages = params.data.stoppages || {};
-                    params.data.stoppages = {
-                        ...stoppages,
-                        [conf.id]: newVal
-                    };
-                    return true;
-                }
-            });
-        });
-
-        // 3. Time Columns (Calculated)
-        cols.push({
-            headerName: 'Inicio',
-            width: 160,
-            valueGetter: (params) => params.data?.startTime,
-            valueFormatter: (params) => {
-                if (!params.value) return '';
-                try {
-                    return format(new Date(params.value), 'EEE dd/MM HH:mm', { locale: es });
-                } catch (e) { return ''; }
-            }
-        });
-
+        // --- Fin (endTime) ---
         cols.push({
             colId: 'endTime',
             headerName: 'Fin',
@@ -756,10 +645,44 @@ export const ProductionScheduler: React.FC = () => {
                     </div>
                 );
             },
-            cellStyle: { fontWeight: 'bold', color: '#1e3a8a', display: 'flex', alignItems: 'center' } // Blue text
+            cellStyle: { fontWeight: 'bold', color: '#1e3a8a', display: 'flex', alignItems: 'center' }
         });
 
-        // 3.1 Mantenimiento Column (antes "Hora Punta") - muestra duración real de segmentos maintenance_hp
+        // --- Ritmo (T/H) ---
+        cols.push({
+            colId: 'ritmo',
+            headerName: getHeader('ritmo', 'Ritmo (T/H)'),
+            width: 100,
+            wrapHeaderText: true,
+            autoHeaderHeight: true,
+            cellClass: 'cell-mono',
+            valueGetter: (params) => params.data?.calculatedPace?.toFixed(0) || 0
+        });
+
+        // --- H-Trab ---
+        cols.push({
+            colId: 'hTrab',
+            headerName: getHeader('hTrab', 'H-Trab'),
+            width: 90,
+            wrapHeaderText: true,
+            autoHeaderHeight: true,
+            cellClass: 'cell-mono',
+            valueGetter: (params) => ((params.data?.productionTimeMinutes || 0) / 60).toFixed(1)
+        });
+
+        // --- Cambio Medida (changeoverMinutes) ---
+        cols.push({
+            colId: 'changeoverMinutes',
+            headerName: getHeader('changeoverMinutes', 'Cambio Medida'),
+            width: 100,
+            wrapHeaderText: true,
+            autoHeaderHeight: true,
+            valueGetter: (params) => params.data?.changeoverMinutes ? `${Math.round(params.data.changeoverMinutes)} min` : '-',
+            cellStyle: (params) => params.data?.changeoverMinutes ? { color: '#e11d48', fontWeight: 'bold' } : undefined,
+            cellRenderer: totalTooltipRenderer
+        });
+
+        // --- Mantenimiento ---
         cols.push({
             colId: 'maintenanceMinutes',
             headerName: getHeader('maintenanceMinutes', 'Mantenimiento'),
@@ -794,7 +717,160 @@ export const ProductionScheduler: React.FC = () => {
             cellRenderer: totalTooltipRenderer
         });
 
-        // 4. Delete Action - REMOVED (now in Context Menu)
+        // --- Otros (forced_stop) ---
+        cols.push({
+            colId: 'otherMinutes',
+            headerName: getHeader('otherMinutes', 'Otros'),
+            width: 100,
+            wrapHeaderText: true,
+            autoHeaderHeight: true,
+            valueGetter: (params) => {
+                const data = params.data as any;
+                if (data && data.otherMinutes !== undefined) {
+                    const val = data.otherMinutes;
+                    return val > 0 ? `${Math.round(val)} min` : '-';
+                }
+                const segments = (data?.segments as any[]) || [];
+                const otherMinutes = segments
+                    .filter((s: any) => s.type === 'forced_stop')
+                    .reduce((sum: number, s: any) => sum + s.durationMinutes, 0);
+                return otherMinutes > 0 ? `${Math.round(otherMinutes)} min` : '-';
+            },
+            cellStyle: (params) => {
+                let otherMinutes = 0;
+                const data = params.data as any;
+                if (data && data.otherMinutes !== undefined) {
+                    otherMinutes = data.otherMinutes;
+                } else {
+                    const segments = (data?.segments as any[]) || [];
+                    otherMinutes = segments
+                        .filter((s: any) => s.type === 'forced_stop')
+                        .reduce((sum: number, s: any) => sum + s.durationMinutes, 0);
+                }
+                return otherMinutes > 0 ? { backgroundColor: '#f3f4f6', color: '#1f2937', fontWeight: 'bold' } : undefined;
+            },
+            cellRenderer: totalTooltipRenderer
+        });
+
+        // --- Cambio Anillo ---
+        cols.push({
+            colId: 'ringChangeMinutes',
+            headerName: getHeader('ringChangeMinutes', 'Cambio Anillo'),
+            width: 100,
+            wrapHeaderText: true,
+            autoHeaderHeight: true,
+            valueGetter: (params) => {
+                const manual = params.data?.ringChangeMinutes || 0;
+                const auto = (params.data?.segments || []).filter((s: any) => s.type === 'ring_change').reduce((sum: number, s: any) => sum + s.durationMinutes, 0);
+                const total = manual + auto;
+                return total > 0 ? `${Math.round(total)} min` : '-';
+            },
+            cellStyle: (params) => {
+                const manual = params.data?.ringChangeMinutes || 0;
+                const auto = (params.data?.segments || []).filter((s: any) => s.type === 'ring_change').reduce((sum: number, s: any) => sum + s.durationMinutes, 0);
+                return (manual + auto) > 0 ? { color: '#7c3aed', fontWeight: 'bold' } : undefined;
+            },
+            cellRenderer: totalTooltipRenderer
+        });
+
+        // --- Cambio Canal ---
+        cols.push({
+            colId: 'channelChangeMinutes',
+            headerName: getHeader('channelChangeMinutes', 'Cambio Canal'),
+            width: 100,
+            wrapHeaderText: true,
+            autoHeaderHeight: true,
+            valueGetter: (params) => {
+                const manual = params.data?.channelChangeMinutes || 0;
+                const auto = (params.data?.segments || []).filter((s: any) => s.type === 'channel_change').reduce((sum: number, s: any) => sum + s.durationMinutes, 0);
+                const total = manual + auto;
+                return total > 0 ? `${Math.round(total)} min` : '-';
+            },
+            cellStyle: (params) => {
+                const manual = params.data?.channelChangeMinutes || 0;
+                const auto = (params.data?.segments || []).filter((s: any) => s.type === 'channel_change').reduce((sum: number, s: any) => sum + s.durationMinutes, 0);
+                return (manual + auto) > 0 ? { color: '#ea580c', fontWeight: 'bold' } : undefined;
+            },
+            cellRenderer: totalTooltipRenderer
+        });
+
+        // --- Acierto y Calibración ---
+        cols.push({
+            colId: 'adjustmentMinutes',
+            headerName: getHeader('adjustmentMinutes', 'Acierto y Calibración'),
+            width: 130,
+            wrapHeaderText: true,
+            autoHeaderHeight: true,
+            valueGetter: (params) => params.data?.adjustmentMinutes ? `${Math.round(params.data.adjustmentMinutes)} min` : '-',
+            cellStyle: (params) => params.data?.adjustmentMinutes ? { color: '#ca8a04', fontWeight: 'bold' } : undefined,
+            cellRenderer: totalTooltipRenderer
+        });
+
+        // --- Cambio Calidad ---
+        cols.push({
+            colId: 'qualityChangeMinutes',
+            headerName: getHeader('qualityChangeMinutes', 'Cambio Calidad'),
+            width: 100,
+            wrapHeaderText: true,
+            autoHeaderHeight: true,
+            valueGetter: (params) => params.data?.qualityChangeMinutes ? `${Math.round(params.data.qualityChangeMinutes)} min` : '-',
+            cellStyle: (params) => params.data?.qualityChangeMinutes ? { color: '#9d174d', fontWeight: 'bold' } : undefined,
+            cellRenderer: totalTooltipRenderer
+        });
+
+        // --- Cambio Tope ---
+        cols.push({
+            colId: 'stopChangeMinutes',
+            headerName: getHeader('stopChangeMinutes', 'Cambio Tope'),
+            width: 100,
+            wrapHeaderText: true,
+            autoHeaderHeight: true,
+            valueGetter: (params) => params.data?.stopChangeMinutes ? `${Math.round(params.data.stopChangeMinutes)} min` : '-',
+            cellStyle: (params) => params.data?.stopChangeMinutes ? { color: '#0d9488', fontWeight: 'bold' } : undefined,
+            cellRenderer: totalTooltipRenderer
+        });
+
+        // --- Dynamic Stoppage Columns ---
+        stoppageConfigs.forEach(conf => {
+            cols.push({
+                headerName: conf.label,
+                colId: conf.id,
+                width: 100,
+                editable: true,
+                wrapHeaderText: true,
+                autoHeaderHeight: true,
+                type: 'numericColumn',
+                valueGetter: (params) => params.data?.stoppages?.[conf.id] || 0,
+                cellRenderer: totalTooltipRenderer,
+                valueSetter: (params: ValueSetterParams<ProductionScheduleItem>) => {
+                    const newVal = Number(String(params.newValue).replace(/,/g, ''));
+                    if (isNaN(newVal)) return false;
+
+                    const stoppages = params.data.stoppages || {};
+                    params.data.stoppages = {
+                        ...stoppages,
+                        [conf.id]: newVal
+                    };
+                    return true;
+                }
+            });
+        });
+
+        // --- Inicio (startTime) ---
+        cols.push({
+            colId: 'startTime',
+            headerName: 'Inicio',
+            width: 160,
+            valueGetter: (params) => params.data?.startTime,
+            valueFormatter: (params) => {
+                if (!params.value) return '';
+                try {
+                    return format(new Date(params.value), 'EEE dd/MM HH:mm', { locale: es });
+                } catch (e) { return ''; }
+            }
+        });
+
+        // --- Delete Action ---
         cols.push({
             headerName: '',
             width: 60,
@@ -1077,6 +1153,20 @@ export const ProductionScheduler: React.FC = () => {
                 <div className="flex items-center justify-end gap-2 border-t border-gray-100 pt-3">
                     <div className="flex items-center gap-1 mr-auto">
                         <button
+                            onClick={handleAutoSizeColumns}
+                            className="p-2 text-gray-500 hover:bg-gray-100 hover:text-blue-600 rounded-lg transition-colors"
+                            title="Autoajustar anchos al contenido"
+                        >
+                            <Columns size={18} />
+                        </button>
+                        <button
+                            onClick={handleSaveColumnLayout}
+                            className="p-2 text-gray-500 hover:bg-gray-100 hover:text-green-600 rounded-lg transition-colors"
+                            title="Guardar distribución de columnas"
+                        >
+                            <Save size={18} />
+                        </button>
+                        <button
                             onClick={handleResetColumnLayout}
                             className="p-2 text-gray-500 hover:bg-gray-100 hover:text-blue-600 rounded-lg transition-colors"
                             title="Restaurar distribución por defecto"
@@ -1140,6 +1230,7 @@ export const ProductionScheduler: React.FC = () => {
                     rowClassRules={rowClassRules}
                     rowHeight={32}
                     headerHeight={48}
+                    maintainColumnOrder={true}
                     // Auto-save triggers
                     onColumnResized={onColumnStateChanged}
                     onColumnMoved={onColumnStateChanged}

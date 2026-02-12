@@ -13,10 +13,12 @@ export const SettingsPanel: React.FC = () => {
         programStartDate,
         columnLabels,
         schedule,
+        manualStops,
         setStoppageConfigs,
         setProgramStartDate,
         importColumnLabels,
-        setSchedule
+        setSchedule,
+        setManualStops
     } = useStore();
     const { articles, setArticles } = useArticleStore();
     const { rules: changeovers, setRules } = useChangeoverStore();
@@ -28,7 +30,8 @@ export const SettingsPanel: React.FC = () => {
             config: {
                 stoppageConfigs,
                 programStartDate,
-                columnLabels
+                columnLabels,
+                manualStops
             },
             schedule,
             database: {
@@ -72,6 +75,14 @@ export const SettingsPanel: React.FC = () => {
                 }
                 if (backup.config.columnLabels) {
                     importColumnLabels(backup.config.columnLabels);
+                }
+                if (backup.config.manualStops) {
+                    // Rehydrate dates from JSON strings
+                    const rehydrated = backup.config.manualStops.map((s: any) => ({
+                        ...s,
+                        start: new Date(s.start)
+                    }));
+                    setManualStops(rehydrated);
                 }
 
                 // Import schedule

@@ -123,4 +123,5 @@ export interface AppState {
   addManualStop: (stop: ManualStop) => void;
   updateManualStop: (id: string, stop: Partial<ManualStop>) => void;
   deleteManualStop: (id: string) => void;
+  setManualStops: (stops: ManualStop[]) => void;
 }

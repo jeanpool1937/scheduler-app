@@ -8,7 +8,7 @@ import type {
     GridApi
 } from 'ag-grid-community';
 import 'ag-grid-community/styles/ag-grid.css';
-import 'ag-grid-community/styles/ag-theme-alpine.css';
+import 'ag-grid-community/styles/ag-theme-quartz.css';
 import * as XLSX from 'xlsx';
 import { useArticleStore } from '../store/useArticleStore';
 import type { Article } from '../types/article';
@@ -38,15 +38,25 @@ export const ArticleMaster: React.FC = () => {
 
     const defaultColDef = useMemo<ColDef>(() => ({
         resizable: true,
-        flex: 1,
+        sortable: true,
+        filter: true,
         minWidth: 100,
-        wrapHeaderText: true,
-        autoHeaderHeight: true,
     }), []);
+
+    const [quickFilterText, setQuickFilterText] = useState('');
 
     const onGridReady = (params: GridReadyEvent) => {
         setGridApi(params.api);
+        // Auto-size columns to fit content
+        params.api.autoSizeAllColumns();
     };
+
+    // Update Quick Filter when text changes
+    React.useEffect(() => {
+        if (gridApi) {
+            gridApi.updateGridOptions({ quickFilterText });
+        }
+    }, [quickFilterText, gridApi]);
 
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -144,31 +154,57 @@ export const ArticleMaster: React.FC = () => {
 
     return (
         <div className="h-full flex flex-col p-4 bg-gray-50">
-            <div className="mb-4 flex justify-between items-center bg-white p-4 rounded-lg shadow-sm">
-                <h2 className="text-xl font-bold text-gray-800">Base de Datos: Maestro de Artículos</h2>
+            {/* Header Redesign */}
+            <div className="flex flex-col gap-4 mb-4 bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                <div className="flex justify-between items-center">
+                    <h2 className="text-xl font-bold text-gray-800 tracking-tight">Maestro de Artículos</h2>
+
+                    <div className="flex items-center gap-2">
+                        {/* Global Search */}
+                        <div className="relative">
+                            <input
+                                type="text"
+                                placeholder="Buscar en todos los campos..."
+                                className="pl-3 pr-8 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-64 shadow-sm"
+                                value={quickFilterText}
+                                onChange={(e) => setQuickFilterText(e.target.value)}
+                            />
+                            {quickFilterText && (
+                                <button
+                                    onClick={() => setQuickFilterText('')}
+                                    className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                                >
+                                    ×
+                                </button>
+                            )}
+                        </div>
+
+                        <div className="h-6 w-px bg-gray-300 mx-2"></div>
+
+                        <label className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors shadow-sm text-sm font-medium">
+                            <Upload size={16} />
+                            Importar
+                            <input type="file" accept=".xlsx, .xls" className="hidden" onChange={handleFileUpload} />
+                        </label>
+                        <button onClick={exportToExcel} className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors shadow-sm text-sm font-medium">
+                            <Download size={16} />
+                            Exportar
+                        </button>
+                    </div>
+                </div>
+
+                {/* Action Bar */}
                 <div className="flex gap-2">
-                    <label className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md cursor-pointer hover:bg-blue-700 transition-colors">
-                        <Upload size={18} />
-                        Importar Excel
-                        <input type="file" accept=".xlsx, .xls" className="hidden" onChange={handleFileUpload} />
-                    </label>
-                    <button onClick={exportToExcel} className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors">
-                        <Download size={18} />
-                        Exportar
+                    <button onClick={addNewRow} className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors text-sm font-semibold">
+                        <Plus size={16} /> Agregar Fila
+                    </button>
+                    <button onClick={deleteSelectedRows} className="flex items-center gap-2 px-3 py-1.5 bg-white text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors text-sm font-semibold">
+                        <Trash2 size={16} /> Eliminar
                     </button>
                 </div>
             </div>
 
-            <div className="flex gap-2 mb-2">
-                <button onClick={addNewRow} className="flex items-center gap-2 px-3 py-1.5 bg-indigo-100 text-indigo-700 rounded hover:bg-indigo-200 transition-colors">
-                    <Plus size={16} /> Agregar Fila
-                </button>
-                <button onClick={deleteSelectedRows} className="flex items-center gap-2 px-3 py-1.5 bg-red-100 text-red-700 rounded hover:bg-red-200 transition-colors">
-                    <Trash2 size={16} /> Eliminar Seleccionados
-                </button>
-            </div>
-
-            <div className="flex-1 w-full ag-theme-alpine shadow-lg rounded-lg overflow-hidden border border-gray-200">
+            <div className="flex-1 w-full ag-theme-quartz shadow-sm rounded-lg overflow-hidden border border-gray-200">
                 <AgGridReact
                     ref={gridRef}
                     rowData={articles}
@@ -180,6 +216,8 @@ export const ArticleMaster: React.FC = () => {
                     animateRows={true}
                     pagination={true}
                     paginationPageSize={50}
+                    rowHeight={32}
+                    headerHeight={48}
                 />
             </div>
         </div>
