@@ -3,8 +3,8 @@ import { useStore } from '../store/useStore';
 import { useArticleStore } from '../store/useArticleStore';
 import { format, addDays, startOfDay, endOfDay, differenceInMinutes, differenceInMilliseconds, isAfter, isBefore } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Printer, Zap, Filter, Check, ChevronDown, FileSpreadsheet } from 'lucide-react';
-import { exportScheduleToExcel, exportMonthlyPlanReport } from '../utils/excelExport';
+import { Zap, Filter, Check, ChevronDown, FileSpreadsheet } from 'lucide-react';
+import { exportFullReport } from '../utils/excelExport';
 import type { SegmentType } from '../types';
 
 interface DailyEvent {
@@ -209,13 +209,11 @@ export const VisualSchedule: React.FC = () => {
 
     }, [schedule, articles, showPeakHoursOnly]);
 
-    const handlePrint = () => {
-        window.print();
-    };
+
 
     const handleExportExcel = async () => {
         try {
-            // Enrich data with actual Article Descriptions for Production events
+            // Enriquecer datos con descripciones reales de artículos
             const enrichedDailySchedules = dailySchedules.map(day => ({
                 ...day,
                 events: day.events.map(ev => {
@@ -230,22 +228,14 @@ export const VisualSchedule: React.FC = () => {
                 })
             }));
 
-            await exportScheduleToExcel({
+            await exportFullReport({
                 dailySchedules: enrichedDailySchedules,
-                monthlyTotals
+                monthlyTotals,
+                articles
             });
         } catch (error) {
             console.error("Export Error:", error);
             alert("Hubo un error al exportar a Excel. Revisa la consola para más detalles.");
-        }
-    };
-
-    const handleExportMonthlyPlan = async () => {
-        try {
-            await exportMonthlyPlanReport(dailySchedules, articles);
-        } catch (error) {
-            console.error("Export Plan Error:", error);
-            alert("Hubo un error al exportar el Plan Mensual. Revisa la consola.");
         }
     };
 
@@ -317,33 +307,11 @@ export const VisualSchedule: React.FC = () => {
     };
 
     return (
-        <div className="bg-white h-full overflow-y-auto relative p-4 print:p-0 font-sans text-gray-900 print:text-black print:overflow-visible print:h-auto print:block">
-            {/* INJECTED PRINT STYLES */}
-            <style>{`
-@media print {
-    @page { margin: 1cm; size: A4 portrait; }
-    html, body, #root, .app-container {
-        height: auto !important;
-        min-height: 100% !important;
-        overflow: visible !important;
-        display: block !important;
-        background: white !important;
-    }
+        <div className="bg-white h-full overflow-y-auto relative p-4 font-sans text-gray-900">
 
-    table {
-        width: 100% !important;
-        table-layout: fixed !important;
-        border-collapse: collapse !important;
-    }
-    thead { display: table-header-group !important; }
-    tfoot { display: table-footer-group !important; }
-    tr, td, th { page-break-inside: avoid !important; break-inside: avoid !important; }
-    button, nav, header:not(.print-header) { display: none !important; }
-}
-`}</style>
 
             {/* Ultra Compact Global Header */}
-            <header className="print-header mb-4 border-b-2 border-black pb-2 flex justify-between items-end print:mb-2 bg-white block">
+            <header className="mb-4 border-b-2 border-black pb-2 flex justify-between items-end bg-white block">
                 <div className="flex gap-8 items-end">
                     <div>
                         <h1 className="text-2xl font-black uppercase leading-none">Programación Mensual</h1>
@@ -355,7 +323,7 @@ export const VisualSchedule: React.FC = () => {
                     </div>
                 </div>
 
-                <div className="flex gap-4 items-center print:hidden">
+                <div className="flex gap-4 items-center">
                     {/* FILTER DROPDOWN */}
                     <div className="relative" onClick={e => e.stopPropagation()}>
                         <button
@@ -419,19 +387,9 @@ export const VisualSchedule: React.FC = () => {
                         <FileSpreadsheet size={16} /> EXCEL
                     </button>
 
-                    <button
-                        onClick={handleExportMonthlyPlan}
-                        className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded text-xs font-bold hover:bg-teal-700 transition shadow"
-                    >
-                        <FileSpreadsheet size={16} /> PLAN MENSUAL
-                    </button>
 
-                    <button
-                        onClick={handlePrint}
-                        className="flex items-center gap-2 bg-black text-white px-4 py-2 rounded text-xs font-bold hover:bg-gray-800 transition shadow"
-                    >
-                        <Printer size={16} /> IMPRIMIR (A4 COMPACTO)
-                    </button>
+
+
                     <button
                         onClick={() => setShowPeakHoursOnly(!showPeakHoursOnly)}
                         className={`flex items - center gap - 2 px - 4 py - 2 rounded text - xs font - bold transition shadow ${showPeakHoursOnly
@@ -444,22 +402,19 @@ export const VisualSchedule: React.FC = () => {
                         HORA PUNTA
                     </button>
                 </div>
-                <div className="text-right hidden print:block">
-                    <p className="text-[10px] font-bold uppercase text-gray-500">Scheduler v2</p>
-                    <p className="text-[8px] text-gray-400 font-mono">{format(new Date(), 'dd/MM/yy HH:mm')}</p>
-                </div>
+
             </header>
 
             {/* CONTINUOUS COMPACT TABLE */}
-            <div className="print:overflow-visible">
-                <table className="w-full text-[10px] leading-tight border-collapse print:text-[9px]">
-                    <thead className="text-white print:text-black">
+            <div>
+                <table className="w-full text-[10px] leading-tight border-collapse">
+                    <thead className="text-white">
                         <tr>
-                            <th className="sticky top-0 z-20 bg-black print:bg-gray-200 p-1 text-left font-bold uppercase w-20 border border-gray-600 print:border-gray-400 shadow-sm">Horario</th>
-                            <th className="sticky top-0 z-20 bg-black print:bg-gray-200 p-1 text-center font-bold uppercase w-12 border border-gray-600 print:border-gray-400 shadow-sm">Min</th>
-                            <th className="sticky top-0 z-20 bg-black print:bg-gray-200 p-1 text-left font-bold uppercase w-24 border border-gray-600 print:border-gray-400 shadow-sm">SKU / Tipo</th>
-                            <th className="sticky top-0 z-20 bg-black print:bg-gray-200 p-1 text-left font-bold uppercase border border-gray-600 print:border-gray-400 shadow-sm">Actividad / Descripción</th>
-                            <th className="sticky top-0 z-20 bg-black print:bg-gray-200 p-1 text-right font-bold uppercase w-16 border border-gray-600 print:border-gray-400 shadow-sm">
+                            <th className="sticky top-0 z-20 bg-black p-1 text-left font-bold uppercase w-20 border border-gray-600 shadow-sm">Horario</th>
+                            <th className="sticky top-0 z-20 bg-black p-1 text-center font-bold uppercase w-12 border border-gray-600 shadow-sm">Min</th>
+                            <th className="sticky top-0 z-20 bg-black p-1 text-left font-bold uppercase w-24 border border-gray-600 shadow-sm">SKU / Tipo</th>
+                            <th className="sticky top-0 z-20 bg-black p-1 text-left font-bold uppercase border border-gray-600 shadow-sm">Actividad / Descripción</th>
+                            <th className="sticky top-0 z-20 bg-black p-1 text-right font-bold uppercase w-16 border border-gray-600 shadow-sm">
                                 Ton
                                 <div className="text-[9px] text-yellow-300 font-mono leading-none mt-1">
                                     Σ {monthlyTotals.tonnage.toLocaleString('en-US', { maximumFractionDigits: 0 })}
@@ -473,7 +428,7 @@ export const VisualSchedule: React.FC = () => {
                                 {/* DAY HEADER ROW */}
                                 <tr
                                     id={`day - ${format(day.date, 'yyyy-MM-dd')} `}
-                                    className="bg-gray-200 print:bg-gray-300 border-t-2 border-black break-after-avoid transition-colors duration-500"
+                                    className="bg-gray-200 border-t-2 border-black transition-colors duration-500"
                                 >
                                     <td colSpan={5} className="p-1 border border-gray-400">
                                         <div className="flex justify-between items-baseline px-1">
@@ -514,12 +469,12 @@ export const VisualSchedule: React.FC = () => {
                                     return (
                                         <tr key={event.id} className={rowClass} style={style}>
                                             {/* Time */}
-                                            <td className="p-0.5 border-r border-gray-200 print:border-gray-300 font-mono whitespace-nowrap text-center">
+                                            <td className="p-0.5 border-r border-gray-200 font-mono whitespace-nowrap text-center">
                                                 {format(event.startTime, 'HH:mm')} - {format(event.endTime, 'HH:mm')}
                                             </td>
 
                                             {/* Duration */}
-                                            <td className="p-0.5 border-r border-gray-200 print:border-gray-300 text-center font-mono">
+                                            <td className="p-0.5 border-r border-gray-200 text-center font-mono">
                                                 {event.durationMinutes.toFixed(0)}
                                             </td>
 
@@ -527,12 +482,12 @@ export const VisualSchedule: React.FC = () => {
                                             <td className="p-0.5 border-r border-gray-200 print:border-gray-300">
                                                 <div className="flex items-center gap-1">
                                                     {event.skuCode ? (
-                                                        <span className="font-black font-mono text-[10px] bg-gray-100 px-1 rounded print:bg-transparent print:border print:border-gray-400">
+                                                        <span className="font-black font-mono text-[10px] bg-gray-100 px-1 rounded">
                                                             {event.skuCode}
                                                         </span>
                                                     ) : (
                                                         <span
-                                                            className="px-1 rounded text-[8px] font-bold uppercase tracking-wider print:border print:border-black print:bg-transparent"
+                                                            className="px-1 rounded text-[8px] font-bold uppercase tracking-wider"
                                                             style={{ backgroundColor: event.color, color: '#333' }}
                                                         >
                                                             {event.label.substring(0, 10)}
