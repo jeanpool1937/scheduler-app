@@ -5,6 +5,7 @@ import { useArticleStore } from '../store/useArticleStore';
 import { useChangeoverStore } from '../store/useChangeoverStore';
 import { useSapStore } from '../store/useSapStore';
 import { Play, RotateCcw, Settings2, BarChart3, Clock, Gauge, TrendingDown, CheckCircle2, Trash2, Plus, ArrowDownToLine, LayoutList } from 'lucide-react';
+import { SmartExplainer } from './SmartExplainer';
 
 interface DraftItem {
     id: string;
@@ -314,6 +315,17 @@ export const ProductionSequencer: React.FC = () => {
                 </div>
             ) : result ? (
                 <div className="space-y-6 pb-12 animate-in slide-in-from-bottom-4">
+                    {/* Innovation Strategy: Smart Explainer */}
+                    <SmartExplainer
+                        stats={{
+                            totalTime: result.tiempoProduccionTotal * 24 + result.tiempoTotalCambio,
+                            totalTonnage: result.params_cant.reduce((a: any, b: any) => a + b, 0),
+                            changeovers: result.secuencia.length,
+                            avgChangeoverTime: result.tiempoTotalCambio / result.secuencia.length * 60
+                        }}
+                        onClose={() => { }}
+                    />
+
                     {/* KPIs */}
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                         <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden group">

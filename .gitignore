@@ -18,7 +18,20 @@ dist-ssr
 .idea
 .DS_Store
 *.suo
-*.ntvs*
+*.ntvs
 *.njsproj
 *.sln
 *.sw?
+
+# Supabase
+supabase/functions/**/.env
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+
+# R&D Artifacts
+*.zip
+backend/rl_agent/__pycache__
+backend/rl_agent/.venv

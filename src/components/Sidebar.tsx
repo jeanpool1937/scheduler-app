@@ -62,6 +62,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
                     return (
                         <button
                             key={item.id}
+                            data-testid={`nav-item-${item.id}`}
                             onClick={() => setActiveTab(item.id as any)}
                             title={collapsed ? item.label : ''}
                             className={`
