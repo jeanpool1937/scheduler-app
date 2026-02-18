@@ -6,6 +6,7 @@ import { useChangeoverStore } from '../store/useChangeoverStore';
 import { Download, Database, Upload } from 'lucide-react';
 import { HolidayConfig } from './HolidayConfig';
 import { ManualStopsConfig } from './ManualStopsConfig';
+import { WorkScheduleConfig } from './WorkScheduleConfig';
 
 export const SettingsPanel: React.FC = () => {
     const activeProcessId = useStore((state) => state.activeProcessId);
@@ -16,7 +17,8 @@ export const SettingsPanel: React.FC = () => {
         programStartDate,
         columnLabels,
         schedule,
-        manualStops
+        manualStops,
+        workSchedule
     } = processData;
 
     const {
@@ -24,22 +26,32 @@ export const SettingsPanel: React.FC = () => {
         setProgramStartDate,
         importColumnLabels,
         setSchedule,
-        setManualStops
+        setManualStops,
+        setWorkSchedule
     } = useStore();
     const articles = useArticleStore((state) => state.getArticles(activeProcessId));
     const setArticles = useArticleStore((state) => state.setArticles);
     const changeovers = useChangeoverStore((state) => state.getRules(activeProcessId));
     const setRules = useChangeoverStore((state) => state.setRules);
 
+    const processNames: Record<string, string> = {
+        laminador1: 'Laminador 1',
+        laminador2: 'Laminador 2',
+        laminador3: 'Laminador 3',
+    };
+
     const handleExportBackup = () => {
         const fullBackup = {
             version: '1.0',
             timestamp: new Date().toISOString(),
+            processId: activeProcessId,
+            processName: processNames[activeProcessId] || activeProcessId,
             config: {
                 stoppageConfigs,
                 programStartDate,
                 columnLabels,
-                manualStops
+                manualStops,
+                workSchedule
             },
             schedule,
             database: {
@@ -52,7 +64,8 @@ export const SettingsPanel: React.FC = () => {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `backup_scheduler_${new Date().toISOString().slice(0, 10)}.json`;
+        const fileName = `backup_${processNames[activeProcessId] || activeProcessId}_${new Date().toISOString().slice(0, 10)}.json`;
+        a.download = fileName.replace(/\s+/g, '_'); // Replace spaces with underscores for filename safety
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -91,6 +104,9 @@ export const SettingsPanel: React.FC = () => {
                         start: new Date(s.start)
                     }));
                     setManualStops(rehydrated);
+                }
+                if (backup.config.workSchedule) {
+                    setWorkSchedule(backup.config.workSchedule);
                 }
 
                 // Import schedule
@@ -170,6 +186,9 @@ export const SettingsPanel: React.FC = () => {
                         </div>
                     </div>
                 </div>
+
+                {/* Work Schedule Configuration */}
+                <WorkScheduleConfig />
 
                 {/* Holidays Configuration */}
                 <HolidayConfig />

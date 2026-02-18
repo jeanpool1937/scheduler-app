@@ -79,34 +79,60 @@ export const ArticleMaster: React.FC = () => {
             const rows = data.slice(1);
 
             const mapHeaderToField = (header: string): keyof Article | undefined => {
-                const h = header.trim().toLowerCase();
-                if (h.includes('sku laminación') || h.includes('sku laminacion')) return 'skuLaminacion';
+                // Normalizar: minúsculas + quitar acentos (é→e, ó→o, á→a, etc.)
+                const h = header.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+                if (h.includes('sku laminacion')) return 'skuLaminacion';
                 if (h.includes('ending')) return 'ending';
-                if (h.includes('codigo programación') || h.includes('codigo programacion')) return 'codigoProgramacion';
-                if (h.includes('descripcion') || h.includes('descripción')) return 'descripcion';
+                if (h.includes('codigo programacion') || h.includes('codigo prog')) return 'codigoProgramacion';
+                if (h.includes('descripcion')) return 'descripcion';
                 if (h.includes('sku palanquilla')) return 'skuPalanquilla';
                 if (h.includes('calidad palanquilla')) return 'calidadPalanquilla';
-                if (h.includes('ritmo t/h')) return 'ritmoTH';
-                if (h.includes('rendimiento metalico') || h.includes('rendimiento metálico')) return 'rendimientoMetalico';
+                if (h.includes('ritmo')) return 'ritmoTH';
+                if (h.includes('rendimiento metal')) return 'rendimientoMetalico';
                 if (h.includes('fam')) return 'fam';
-                if (h.includes('acierto y calibración') || h.includes('acierto y calibracion')) return 'aciertoCalibracion';
-                if (h.includes('id tabla de cambio')) return 'idTablaCambioMedida';
+                if (h.includes('acierto') && h.includes('calibracion')) return 'aciertoCalibracion';
+                if (h.includes('tabla') && h.includes('cambio')) return 'idTablaCambioMedida';
                 if (h.includes('peso palanquilla')) return 'pesoPalanquilla';
-                if (h.includes('almacen destino') || h.includes('almacén destino')) return 'almacenDestino';
+                if (h.includes('almacen destino')) return 'almacenDestino';
                 if (h.includes('comentarios')) return 'comentarios';
                 return undefined;
             };
 
             const fieldMap: Record<number, keyof Article> = {};
+            const unmatchedHeaders: string[] = [];
             headers.forEach((h, index) => {
-                const field = mapHeaderToField(h);
-                if (field) fieldMap[index] = field;
+                if (!h) return; // Columnas vacías
+                const field = mapHeaderToField(String(h));
+                if (field) {
+                    fieldMap[index] = field;
+                } else {
+                    unmatchedHeaders.push(`[${index}] "${h}"`);
+                }
             });
+            if (unmatchedHeaders.length > 0) {
+                console.warn('⚠️ Columnas NO reconocidas:', unmatchedHeaders.join(', '));
+                alert(`⚠️ ${unmatchedHeaders.length} columna(s) no reconocida(s):\n${unmatchedHeaders.join('\n')}`);
+            }
+
+            // Campos numéricos del Article
+            const numericFields: Set<keyof Article> = new Set([
+                'ritmoTH', 'rendimientoMetalico', 'aciertoCalibracion', 'pesoPalanquilla'
+            ]);
 
             const newArticles: Article[] = rows.map((row: any) => {
                 const article: any = {};
                 Object.keys(fieldMap).forEach((colIndex: any) => {
-                    article[fieldMap[colIndex]] = row[colIndex];
+                    const field = fieldMap[colIndex];
+                    const rawValue = row[colIndex];
+
+                    if (numericFields.has(field)) {
+                        // Campos numéricos: convertir a número, 0 si es inválido
+                        const num = Number(rawValue);
+                        article[field] = isNaN(num) ? 0 : num;
+                    } else {
+                        // Campos de texto: siempre convertir a string
+                        article[field] = rawValue != null ? String(rawValue).trim() : '';
+                    }
                 });
                 return article as Article;
             }).filter(a => a.skuLaminacion); // Filter empty rows
@@ -149,11 +175,37 @@ export const ArticleMaster: React.FC = () => {
         }
     };
 
+    // Mapa de campos internos → nombres legibles para exportación
+    const EXPORT_HEADERS: Record<keyof Article, string> = {
+        skuLaminacion: 'SKU Laminación',
+        ending: 'Ending',
+        codigoProgramacion: 'Código Programación',
+        descripcion: 'Descripción',
+        skuPalanquilla: 'SKU Palanquilla',
+        calidadPalanquilla: 'Calidad Palanquilla',
+        ritmoTH: 'Ritmo T/H',
+        rendimientoMetalico: 'Rendimiento Metálico %',
+        fam: 'Fam.',
+        aciertoCalibracion: 'Acierto y Calibración',
+        idTablaCambioMedida: 'ID Tabla Cambio Medida',
+        pesoPalanquilla: 'Peso Palanquilla (kg)',
+        almacenDestino: 'Almacén Destino',
+        comentarios: 'Comentarios'
+    };
+
     const exportToExcel = () => {
-        const ws = XLSX.utils.json_to_sheet(articles);
+        // Renombrar campos internos a headers legibles
+        const exportData = articles.map(article => {
+            const row: Record<string, any> = {};
+            (Object.keys(EXPORT_HEADERS) as (keyof Article)[]).forEach(field => {
+                row[EXPORT_HEADERS[field]] = article[field];
+            });
+            return row;
+        });
+        const ws = XLSX.utils.json_to_sheet(exportData);
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Maestro Articulos");
-        XLSX.writeFile(wb, "Maestro_Articulos_Export.xlsx");
+        XLSX.utils.book_append_sheet(wb, ws, 'Maestro Articulos');
+        XLSX.writeFile(wb, 'Maestro_Articulos_Export.xlsx');
     };
 
     return (

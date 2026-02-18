@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { AppState, ProcessData, ProductionScheduleItem, StoppageConfig } from '../types';
+import type { AppState, ProcessData, ProductionScheduleItem, StoppageConfig, WorkSchedule } from '../types';
 import type { Article } from '../types/article';
 import { useArticleStore } from './useArticleStore';
 import { useChangeoverStore } from './useChangeoverStore';
@@ -21,7 +21,8 @@ const recalculate = (
     rules: ChangeoverRule[],
     startDate: Date,
     holidays: string[] = [],
-    manualStops: { id: string; start: Date; durationMinutes: number; label: string }[] = []
+    manualStops: { id: string; start: Date; durationMinutes: number; label: string }[] = [],
+    workSchedule?: WorkSchedule
 ): ProductionScheduleItem[] => {
     let sorted = [...items].sort((a, b) => a.sequenceOrder - b.sequenceOrder);
 
@@ -106,7 +107,7 @@ const recalculate = (
     });
 
     // Phase 2: Simulate Timeline
-    const simulatedItems = simulateSchedule(preProcessedItems, startDate, holidays, manualStops);
+    const simulatedItems = simulateSchedule(preProcessedItems, startDate, holidays, manualStops, workSchedule);
 
     // Phase 3: Map back
     return simulatedItems.map(simItem => ({
@@ -124,7 +125,43 @@ const initialStoppages: StoppageConfig[] = [
 
 const MAX_HISTORY = 5;
 
-const createInitialProcessData = (): ProcessData => ({
+// Esquemas de trabajo por defecto
+const makeDaySchedule = (active: boolean, hours: number, startHour: number, startMinute = 0): import('../types').DaySchedule => ({
+    active, hours, startHour, startMinute
+});
+
+const DEFAULT_WORK_SCHEDULE_24_7: WorkSchedule = {
+    is24h: true,
+    days: {
+        0: makeDaySchedule(true, 24, 0),
+        1: makeDaySchedule(true, 24, 0),
+        2: makeDaySchedule(true, 24, 0),
+        3: makeDaySchedule(true, 24, 0),
+        4: makeDaySchedule(true, 24, 0),
+        5: makeDaySchedule(true, 24, 0),
+        6: makeDaySchedule(true, 24, 0),
+    }
+};
+
+const DEFAULT_WORK_SCHEDULE_LAM1: WorkSchedule = {
+    is24h: false,
+    days: {
+        0: makeDaySchedule(true, 16, 22, 0),  // Dom
+        1: makeDaySchedule(true, 16, 22, 0),  // Lun
+        2: makeDaySchedule(true, 16, 22, 0),  // Mar
+        3: makeDaySchedule(true, 16, 22, 0),  // Mié
+        4: makeDaySchedule(true, 16, 22, 0),  // Jue
+        5: makeDaySchedule(true, 16, 22, 0),  // Vie
+        6: makeDaySchedule(false, 0, 0, 0),   // Sáb - no opera
+    }
+};
+
+const getDefaultWorkSchedule = (processId: string): WorkSchedule => {
+    if (processId === 'laminador1') return JSON.parse(JSON.stringify(DEFAULT_WORK_SCHEDULE_LAM1));
+    return JSON.parse(JSON.stringify(DEFAULT_WORK_SCHEDULE_24_7));
+};
+
+const createInitialProcessData = (processId: string): ProcessData => ({
     schedule: [],
     stoppageConfigs: initialStoppages,
     programStartDate: new Date(),
@@ -132,6 +169,7 @@ const createInitialProcessData = (): ProcessData => ({
     scheduleHistory: [],
     holidays: [],
     manualStops: [],
+    workSchedule: getDefaultWorkSchedule(processId),
     visualTargetDate: null
 });
 
@@ -140,9 +178,9 @@ export const useStore = create<AppState>()(
         (set, get) => ({
             activeProcessId: 'laminador1',
             processes: {
-                'laminador1': createInitialProcessData(),
-                'laminador2': createInitialProcessData(),
-                'laminador3': createInitialProcessData(),
+                'laminador1': createInitialProcessData('laminador1'),
+                'laminador2': createInitialProcessData('laminador2'),
+                'laminador3': createInitialProcessData('laminador3'),
             },
             activeTab: 'scheduler',
 
@@ -324,11 +362,11 @@ export const useStore = create<AppState>()(
                 const pid = state.activeProcessId;
                 const pData = state.processes[pid];
 
-                const { schedule, programStartDate, holidays, manualStops } = pData;
+                const { schedule, programStartDate, holidays, manualStops, workSchedule } = pData;
                 const articles = useArticleStore.getState().getArticles(pid);
                 const rules = useChangeoverStore.getState().getRules(pid);
 
-                const newSchedule = recalculate(schedule, articles, rules, programStartDate, holidays, manualStops);
+                const newSchedule = recalculate(schedule, articles, rules, programStartDate, holidays, manualStops, workSchedule);
 
                 set((s) => ({
                     processes: {
@@ -504,6 +542,19 @@ export const useStore = create<AppState>()(
                 });
             },
 
+            setWorkSchedule: (schedule) => {
+                set((state) => {
+                    const pid = state.activeProcessId;
+                    return {
+                        processes: {
+                            ...state.processes,
+                            [pid]: { ...state.processes[pid], workSchedule: schedule }
+                        }
+                    };
+                });
+                get().recalculateSchedule();
+            },
+
             setVisualTargetDate: (date) => {
                 set((state) => {
                     const pid = state.activeProcessId;
@@ -520,7 +571,7 @@ export const useStore = create<AppState>()(
                 const state = get();
                 const pid = state.activeProcessId;
                 const pData = state.processes[pid];
-                const { schedule, programStartDate, holidays, manualStops } = pData;
+                const { schedule, programStartDate, holidays, manualStops, workSchedule } = pData;
                 const articles = useArticleStore.getState().getArticles(pid);
                 const rules = useChangeoverStore.getState().getRules(pid);
 
@@ -556,7 +607,7 @@ export const useStore = create<AppState>()(
                 const testQuantity = (q: number) => {
                     const tempSchedule = [...schedule];
                     tempSchedule[itemIndex] = { ...item, quantity: q };
-                    const simulated = recalculate(tempSchedule, articles, rules, programStartDate, holidays, manualStops);
+                    const simulated = recalculate(tempSchedule, articles, rules, programStartDate, holidays, manualStops, workSchedule);
                     const simulatedItem = simulated[itemIndex];
                     if (!simulatedItem.computedEnd) return { error: Infinity, diff: 0, end: new Date() };
                     const diffMinutes = (simulatedItem.computedEnd.getTime() - targetEndDate.getTime()) / 60000;
@@ -605,6 +656,25 @@ export const useStore = create<AppState>()(
                                 ...s,
                                 start: typeof s.start === 'string' ? new Date(s.start) : s.start
                             }));
+                        }
+                        // Ensure workSchedule exists and uses new per-day format
+                        if (!pData.workSchedule) {
+                            pData.workSchedule = getDefaultWorkSchedule(pid);
+                        } else if (!('is24h' in pData.workSchedule)) {
+                            // Migrar formato viejo (hoursPerDay) al nuevo (per-day)
+                            const old = pData.workSchedule as any;
+                            const is24h = (old.hoursPerDay || 24) >= 24;
+                            const migratedDays: Record<number, any> = {};
+                            for (let d = 0; d < 7; d++) {
+                                const active = is24h || (old.operationDays || []).includes(d);
+                                migratedDays[d] = {
+                                    active,
+                                    hours: is24h ? 24 : (old.hoursPerDay || 16),
+                                    startHour: is24h ? 0 : (old.operationStartHour || 0),
+                                    startMinute: is24h ? 0 : (old.operationStartMinute || 0),
+                                };
+                            }
+                            pData.workSchedule = { is24h, days: migratedDays };
                         }
                     }
                 }

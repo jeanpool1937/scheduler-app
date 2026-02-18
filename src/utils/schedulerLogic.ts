@@ -1,6 +1,6 @@
 
 import { addMinutes, differenceInMilliseconds, getDay, isAfter, isBefore, setHours, setMinutes, startOfDay, addDays, format, differenceInMinutes } from 'date-fns';
-import type { ProductionScheduleItem, SegmentType } from '../types';
+import type { ProductionScheduleItem, SegmentType, WorkSchedule } from '../types';
 
 // ============================================================
 // CONFIGURACIÓN
@@ -89,6 +89,7 @@ const SEGMENT_COLORS: Record<SegmentType, string> = {
     channel_change: 'bg-orange-100 text-orange-800',
     maintenance_hp: '#fee2e2',
     forced_stop: 'bg-gray-100 text-gray-800',
+    off_shift: '#f3f4f6',
 };
 
 const SEGMENT_LABELS: Record<SegmentType, string> = {
@@ -101,6 +102,7 @@ const SEGMENT_LABELS: Record<SegmentType, string> = {
     channel_change: 'Cambio Canal',
     maintenance_hp: 'Mantenimiento',
     forced_stop: 'Parada Manual',
+    off_shift: 'Fuera de Turno',
 };
 
 const createSegment = (
@@ -161,19 +163,190 @@ export const getNextPeakStart = (date: Date): Date => {
 };
 
 // ============================================================
+// WORK SCHEDULE HELPERS
+// ============================================================
+
+/**
+ * Verifica si un momento dado está dentro del horario de operación.
+ * Con el modelo por día, cada día tiene su propia configuración.
+ */
+const isInOperatingHours = (date: Date, ws: WorkSchedule): boolean => {
+    if (ws.is24h) return true;
+
+    const day = getDay(date);
+    const hour = date.getHours();
+    const minute = date.getMinutes();
+    const currentMinutesOfDay = hour * 60 + minute;
+
+    // Primero verificar si este day-config tiene turno que empieza HOY
+    const dayConfig = ws.days[day];
+    if (dayConfig && dayConfig.active && dayConfig.hours > 0) {
+        const startMinutesOfDay = dayConfig.startHour * 60 + dayConfig.startMinute;
+        const endMinutesOfDay = startMinutesOfDay + dayConfig.hours * 60;
+
+        if (endMinutesOfDay <= 1440) {
+            // No cruza medianoche
+            if (currentMinutesOfDay >= startMinutesOfDay && currentMinutesOfDay < endMinutesOfDay) {
+                return true;
+            }
+        } else {
+            // Cruza medianoche - parte nocturna (22:00-23:59) pertenece a HOY
+            if (currentMinutesOfDay >= startMinutesOfDay) {
+                return true;
+            }
+        }
+    }
+
+    // Verificar si estamos en la parte diurna de un turno que EMPEZÓ AYER
+    const prevDay = (day + 6) % 7; // Día anterior
+    const prevConfig = ws.days[prevDay];
+    if (prevConfig && prevConfig.active && prevConfig.hours > 0) {
+        const prevStartMinutes = prevConfig.startHour * 60 + prevConfig.startMinute;
+        const prevEndMinutes = prevStartMinutes + prevConfig.hours * 60;
+
+        if (prevEndMinutes > 1440) {
+            // El turno de ayer cruza medianoche
+            const endMinutesWrapped = prevEndMinutes - 1440;
+            if (currentMinutesOfDay < endMinutesWrapped) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+};
+
+/**
+ * Dado un cursor fuera de horario, calcula cuándo empieza el próximo turno operativo.
+ */
+const getNextOperatingStart = (date: Date, ws: WorkSchedule): Date => {
+    if (ws.is24h) return date;
+
+    let cursor = new Date(date);
+    // Intentar hasta 14 días adelante para encontrar el próximo turno
+    for (let d = 0; d < 14; d++) {
+        const day = getDay(cursor);
+        const dayConfig = ws.days[day];
+
+        if (dayConfig && dayConfig.active && dayConfig.hours > 0) {
+            const opStart = setMinutes(setHours(new Date(cursor), dayConfig.startHour), dayConfig.startMinute);
+            opStart.setSeconds(0, 0);
+
+            if (opStart >= date) {
+                return opStart;
+            }
+        }
+
+        // Avanzar al día siguiente a medianoche
+        cursor = startOfDay(addDays(cursor, 1));
+    }
+
+    // Fallback: no debería llegar aquí
+    return date;
+};
+
+/**
+ * Si el cursor está fuera de horario, avanza al próximo turno y retorna el gap.
+ * Si está dentro del horario, retorna null.
+ */
+const advancePastOffShift = (
+    cursor: Date,
+    ws: WorkSchedule
+): { nextStart: Date; gapMinutes: number } | null => {
+    if (ws.is24h) return null;
+    if (isInOperatingHours(cursor, ws)) return null;
+
+    const nextStart = getNextOperatingStart(cursor, ws);
+    const gapMinutes = getDurationInMinutes(nextStart, cursor);
+
+    if (gapMinutes <= 0) return null;
+    return { nextStart, gapMinutes };
+};
+
+/**
+ * Calcula cuántos minutos de operación quedan desde el cursor hasta el fin del turno actual.
+ * Ahora busca el turno activo que cubre este momento (puede ser del día actual o del anterior).
+ */
+const getMinutesUntilShiftEnd = (date: Date, ws: WorkSchedule): number => {
+    if (ws.is24h) return Infinity;
+
+    const day = getDay(date);
+    const hour = date.getHours();
+    const minute = date.getMinutes();
+    const currentMinutesOfDay = hour * 60 + minute;
+
+    // Verificar turno que empieza HOY
+    const dayConfig = ws.days[day];
+    if (dayConfig && dayConfig.active && dayConfig.hours > 0) {
+        const startMinutesOfDay = dayConfig.startHour * 60 + dayConfig.startMinute;
+        const endMinutesOfDay = startMinutesOfDay + dayConfig.hours * 60;
+
+        if (endMinutesOfDay <= 1440) {
+            if (currentMinutesOfDay >= startMinutesOfDay && currentMinutesOfDay < endMinutesOfDay) {
+                return endMinutesOfDay - currentMinutesOfDay;
+            }
+        } else {
+            // Cruza medianoche - parte nocturna
+            if (currentMinutesOfDay >= startMinutesOfDay) {
+                return (1440 - currentMinutesOfDay) + (endMinutesOfDay - 1440);
+            }
+        }
+    }
+
+    // Verificar turno del DÍA ANTERIOR que cruza medianoche
+    const prevDay = (day + 6) % 7; // Día anterior
+    const prevConfig = ws.days[prevDay];
+    if (prevConfig && prevConfig.active && prevConfig.hours > 0) {
+        const prevStartMinutes = prevConfig.startHour * 60 + prevConfig.startMinute;
+        const prevEndMinutes = prevStartMinutes + prevConfig.hours * 60;
+
+        if (prevEndMinutes > 1440) {
+            const endMinutesWrapped = prevEndMinutes - 1440;
+            if (currentMinutesOfDay < endMinutesWrapped) {
+                return endMinutesWrapped - currentMinutesOfDay;
+            }
+        }
+    }
+
+    return 0; // No estamos en ningún turno
+};
+
+// ============================================================
 // FASE 1: BASELINE (Solo paradas Tipo A + producción lineal)
 // ============================================================
 
 const buildBaseline = (
     items: ProductionScheduleItem[],
-    globalStart: Date
+    globalStart: Date,
+    ws?: WorkSchedule
 ): EnhancedScheduleItem[] => {
     let cursor = new Date(globalStart);
     cursor.setSeconds(0, 0);
 
+    // Si el inicio global cae fuera de turno, avanzar primero
+    if (ws && !ws.is24h) {
+        const gap = advancePastOffShift(cursor, ws);
+        if (gap) {
+            cursor = gap.nextStart;
+        }
+    }
+
     return items.map(item => {
         const itemStart = new Date(cursor);
         const segments: ScheduleSegment[] = [];
+
+        // Helper: insertar off_shift si cursor está fuera de turno
+        const insertOffShiftIfNeeded = () => {
+            if (!ws || ws.is24h) return;
+            const gap = advancePastOffShift(cursor, ws);
+            if (gap) {
+                segments.push(createSegment('off_shift', cursor, gap.gapMinutes, 'Fuera de Turno'));
+                cursor = gap.nextStart;
+            }
+        };
+
+        // Verificar off_shift al inicio de cada item
+        insertOffShiftIfNeeded();
 
         // 1. Paradas manuales (forced_stop)
         if (item.stoppages) {
@@ -181,6 +354,7 @@ const buildBaseline = (
                 if (duration > 0) {
                     segments.push(createSegment('forced_stop', cursor, duration, `Parada (ID: ${stopId})`));
                     cursor = addMinutes(cursor, duration);
+                    insertOffShiftIfNeeded();
                 }
             });
         }
@@ -189,10 +363,12 @@ const buildBaseline = (
         if (item.ringChangeMinutes && item.ringChangeMinutes > 0) {
             segments.push(createSegment('ring_change', cursor, item.ringChangeMinutes, 'Cambio Anillo (Manual)'));
             cursor = addMinutes(cursor, item.ringChangeMinutes);
+            insertOffShiftIfNeeded();
         }
         if (item.channelChangeMinutes && item.channelChangeMinutes > 0) {
             segments.push(createSegment('channel_change', cursor, item.channelChangeMinutes, 'Cambio Canal (Manual)'));
             cursor = addMinutes(cursor, item.channelChangeMinutes);
+            insertOffShiftIfNeeded();
         }
 
         // 3. Paradas Tipo A (inter-orden) en orden de prioridad
@@ -200,26 +376,53 @@ const buildBaseline = (
         if (item.changeoverMinutes && item.changeoverMinutes > 0) {
             segments.push(createSegment('changeover', cursor, item.changeoverMinutes));
             cursor = addMinutes(cursor, item.changeoverMinutes);
+            insertOffShiftIfNeeded();
 
             // R4: Acierto/Calibración (siempre con cambio de medida)
             if (item.adjustmentMinutes && item.adjustmentMinutes > 0) {
                 segments.push(createSegment('adjustment', cursor, item.adjustmentMinutes));
                 cursor = addMinutes(cursor, item.adjustmentMinutes);
+                insertOffShiftIfNeeded();
             }
         } else if (item.qualityChangeMinutes && item.qualityChangeMinutes > 0) {
             // R2: Cambio de Calidad (solo si NO hubo cambio de medida)
             segments.push(createSegment('quality_change', cursor, item.qualityChangeMinutes));
             cursor = addMinutes(cursor, item.qualityChangeMinutes);
+            insertOffShiftIfNeeded();
         } else if (item.stopChangeMinutes && item.stopChangeMinutes > 0) {
             // R3: Cambio de Tope (solo si NO hubo cambio de medida NI calidad)
             segments.push(createSegment('stop_change', cursor, item.stopChangeMinutes));
             cursor = addMinutes(cursor, item.stopChangeMinutes);
+            insertOffShiftIfNeeded();
         }
 
-        // 4. Producción completa como un solo segmento
+        // 4. Producción - dividir por turnos si es necesario
         if (item.productionTimeMinutes > 0) {
-            segments.push(createSegment('production', cursor, item.productionTimeMinutes));
-            cursor = addMinutes(cursor, item.productionTimeMinutes);
+            let remainingProd = item.productionTimeMinutes;
+
+            while (remainingProd > 0.01) {
+                insertOffShiftIfNeeded();
+
+                if (ws && !ws.is24h) {
+                    // Calcular cuánto queda del turno actual
+                    const minutesLeft = getMinutesUntilShiftEnd(cursor, ws);
+                    const chunk = Math.min(remainingProd, minutesLeft);
+
+                    if (chunk > 0.01) {
+                        segments.push(createSegment('production', cursor, chunk));
+                        cursor = addMinutes(cursor, chunk);
+                        remainingProd -= chunk;
+                    } else {
+                        // No queda tiempo en este turno, insertaremos off_shift en la próxima iteración
+                        cursor = addMinutes(cursor, 0.1); // Pequeño avance para salir del límite
+                    }
+                } else {
+                    // 24h continuo: un solo segmento de producción
+                    segments.push(createSegment('production', cursor, remainingProd));
+                    cursor = addMinutes(cursor, remainingProd);
+                    remainingProd = 0;
+                }
+            }
         }
 
         return {
@@ -619,6 +822,7 @@ const rebuildTimeline = (items: EnhancedScheduleItem[]): void => {
         item.computedStart = new Date(cursor);
 
         for (const seg of item.segments) {
+            // Skip off_shift segments during rebuild - they'll be in the right place
             seg.start = new Date(cursor);
             seg.end = addMinutes(cursor, seg.durationMinutes);
             cursor = new Date(seg.end);
@@ -687,12 +891,13 @@ export const simulateSchedule = (
     items: ProductionScheduleItem[],
     globalStart: Date,
     holidays: string[] = [],
-    manualStops: { id: string; start: Date; durationMinutes: number; label: string }[] = []
+    manualStops: { id: string; start: Date; durationMinutes: number; label: string }[] = [],
+    workSchedule?: WorkSchedule
 ): EnhancedScheduleItem[] => {
     if (items.length === 0) return [];
 
-    // Fase 1: Construir baseline con solo paradas Tipo A
-    const baseline = buildBaseline(items, globalStart);
+    // Fase 1: Construir baseline con solo paradas Tipo A (y off_shift)
+    const baseline = buildBaseline(items, globalStart, workSchedule);
 
     // Fase 2: Insertar paradas Tipo B/C iterativamente hasta convergencia
     const result = insertTypeBCStops(baseline, holidays, manualStops);

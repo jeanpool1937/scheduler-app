@@ -20,6 +20,24 @@ export interface StoppageConfig {
 
 export type ProcessId = 'laminador1' | 'laminador2' | 'laminador3';
 
+export interface DaySchedule {
+  /** Si el día está activo (opera) */
+  active: boolean;
+  /** Horas de operación este día (1-24). 24 = continuo */
+  hours: number;
+  /** Hora de inicio de operación (0-23) */
+  startHour: number;
+  /** Minuto de inicio de operación (0-59) */
+  startMinute: number;
+}
+
+export interface WorkSchedule {
+  /** Modo rápido: true = 24h/7d sin restricciones */
+  is24h: boolean;
+  /** Configuración por día: clave = getDay() (0=Dom ... 6=Sáb) */
+  days: Record<number, DaySchedule>;
+}
+
 export interface ProcessConfig {
   id: ProcessId;
   name: string;
@@ -36,7 +54,8 @@ export type SegmentType =
   | 'ring_change'       // R5: Cambio de anillo (18:30 diario)
   | 'channel_change'    // R6: Cambio de canal (06:30 diario)
   | 'maintenance_hp'    // R7: Hora punta (18:30-20:30 L-V)
-  | 'forced_stop';      // Paradas manuales
+  | 'forced_stop'       // Paradas manuales
+  | 'off_shift';        // Fuera de turno (horas inactivas)
 
 export interface ManualStop {
   id: string;
@@ -91,6 +110,7 @@ export interface ProcessData {
   scheduleHistory: ProductionScheduleItem[][];
   holidays: string[];
   manualStops: ManualStop[];
+  workSchedule: WorkSchedule;
 
   // Navigation/Visual State specific to process
   visualTargetDate: Date | null;
@@ -143,6 +163,9 @@ export interface AppState {
   updateManualStop: (id: string, stop: Partial<ManualStop>) => void;
   deleteManualStop: (id: string) => void;
   setManualStops: (stops: ManualStop[]) => void;
+
+  // Work Schedule
+  setWorkSchedule: (schedule: WorkSchedule) => void;
 
   // UI State (Global)
   activeTab: 'scheduler' | 'visual' | 'database' | 'settings';
