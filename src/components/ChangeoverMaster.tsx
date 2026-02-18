@@ -2,8 +2,6 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import type { ColDef, CellValueChangedEvent, GridReadyEvent, GridApi } from 'ag-grid-community';
-import 'ag-grid-community/styles/ag-grid.css';
-import 'ag-grid-community/styles/ag-theme-quartz.css';
 import * as XLSX from 'xlsx';
 import { useChangeoverStore } from '../store/useChangeoverStore';
 import type { ChangeoverRule } from '../types/changeover';
@@ -98,8 +96,8 @@ export const ChangeoverMaster: React.FC = () => {
     };
 
     const handleCellValueChanged = (event: CellValueChangedEvent) => {
-        if (event.rowIndex !== null) {
-            updateRule(activeProcessId, event.rowIndex, event.data);
+        if (event.data.id) {
+            updateRule(activeProcessId, event.data.id, event.data);
         }
     };
 
@@ -118,8 +116,11 @@ export const ChangeoverMaster: React.FC = () => {
     const deleteSelectedRows = () => {
         const selectedNodes = gridApi?.getSelectedNodes();
         if (selectedNodes && selectedNodes.length > 0) {
-            const indicesToRemove = selectedNodes.map(node => node.rowIndex).filter(i => i !== null) as number[];
-            deleteRules(activeProcessId, indicesToRemove);
+            const idsToRemove = selectedNodes
+                .map(node => node.data.id)
+                .filter(id => !!id) as string[];
+
+            deleteRules(activeProcessId, idsToRemove);
             gridApi?.deselectAll();
         }
     };
@@ -192,7 +193,8 @@ export const ChangeoverMaster: React.FC = () => {
                     defaultColDef={defaultColDef}
                     onGridReady={onGridReady}
                     onCellValueChanged={handleCellValueChanged}
-                    rowSelection="multiple"
+                    getRowId={params => params.data.id}
+                    rowSelection={{ mode: 'multiRow' }}
                     animateRows={true}
                     pagination={true}
                     paginationPageSize={50}

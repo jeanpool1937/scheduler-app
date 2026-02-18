@@ -102,6 +102,20 @@ export interface ProductionScheduleItem {
 
 // ... imports
 
+export interface SequencerConfig {
+  draftItems: any[]; // Using any[] for flexibility, or define DraftItem here
+  params: {
+    poblacion: number;
+    generaciones: number;
+    pesoVenta: number;
+    costoVP: number;
+    costoTC: number;
+    tasaMutacion: number;
+    tasaElitismo: number;
+  };
+  lastResult: any;
+}
+
 export interface ProcessData {
   schedule: ProductionScheduleItem[];
   stoppageConfigs: StoppageConfig[];
@@ -111,6 +125,7 @@ export interface ProcessData {
   holidays: string[];
   manualStops: ManualStop[];
   workSchedule: WorkSchedule;
+  sequencerConfig?: SequencerConfig;
 
   // Navigation/Visual State specific to process
   visualTargetDate: Date | null;
@@ -123,8 +138,9 @@ export interface AppState {
 
   // Actions (global)
   setActiveProcess: (id: ProcessId) => void;
-  setActiveTab: (tab: 'scheduler' | 'visual' | 'database' | 'settings') => void;
+  setActiveTab: (tab: 'scheduler' | 'visual' | 'database' | 'settings' | 'sequencer') => void;
   setVisualTargetDate: (date: Date | null) => void;
+  fetchProcessData: (processId: ProcessId) => Promise<void>;
 
   // Actions (delegated to active process)
   addScheduleItem: (item: Omit<ProductionScheduleItem, 'id' | 'sequenceOrder'>) => void;
@@ -167,6 +183,9 @@ export interface AppState {
   // Work Schedule
   setWorkSchedule: (schedule: WorkSchedule) => void;
 
+  // Sequencer Config
+  saveSequencerConfig: (config: SequencerConfig) => Promise<void>;
+
   // UI State (Global)
-  activeTab: 'scheduler' | 'visual' | 'database' | 'settings';
+  activeTab: 'scheduler' | 'visual' | 'database' | 'settings' | 'sequencer';
 }

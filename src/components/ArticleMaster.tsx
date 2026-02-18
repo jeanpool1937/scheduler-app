@@ -7,8 +7,6 @@ import type {
     GridReadyEvent,
     GridApi
 } from 'ag-grid-community';
-import 'ag-grid-community/styles/ag-grid.css';
-import 'ag-grid-community/styles/ag-theme-quartz.css';
 import * as XLSX from 'xlsx';
 import { useArticleStore } from '../store/useArticleStore';
 import type { Article } from '../types/article';
@@ -145,8 +143,8 @@ export const ArticleMaster: React.FC = () => {
     };
 
     const handleCellValueChanged = (event: CellValueChangedEvent) => {
-        if (event.rowIndex !== null) {
-            updateArticle(activeProcessId, event.rowIndex, event.data);
+        if (event.data.id) {
+            updateArticle(activeProcessId, event.data.id, event.data);
         }
     };
 
@@ -167,16 +165,17 @@ export const ArticleMaster: React.FC = () => {
     const deleteSelectedRows = () => {
         const selectedNodes = gridApi?.getSelectedNodes();
         if (selectedNodes && selectedNodes.length > 0) {
-            const indicesToRemove = selectedNodes.map(node => node.rowIndex).filter(i => i !== null) as number[];
-            // Sort in descending order to avoid index shifting issues if we deleted one by one, 
-            // but store's deleteArticles handles array of indices logic.
-            deleteArticles(activeProcessId, indicesToRemove);
+            const idsToRemove = selectedNodes
+                .map(node => node.data.id)
+                .filter(id => !!id) as string[];
+
+            deleteArticles(activeProcessId, idsToRemove);
             gridApi?.deselectAll();
         }
     };
 
     // Mapa de campos internos → nombres legibles para exportación
-    const EXPORT_HEADERS: Record<keyof Article, string> = {
+    const EXPORT_HEADERS: Partial<Record<keyof Article, string>> = {
         skuLaminacion: 'SKU Laminación',
         ending: 'Ending',
         codigoProgramacion: 'Código Programación',
@@ -198,7 +197,10 @@ export const ArticleMaster: React.FC = () => {
         const exportData = articles.map(article => {
             const row: Record<string, any> = {};
             (Object.keys(EXPORT_HEADERS) as (keyof Article)[]).forEach(field => {
-                row[EXPORT_HEADERS[field]] = article[field];
+                const header = EXPORT_HEADERS[field];
+                if (header) {
+                    row[header] = article[field];
+                }
             });
             return row;
         });
@@ -268,10 +270,12 @@ export const ArticleMaster: React.FC = () => {
                     defaultColDef={defaultColDef}
                     onGridReady={onGridReady}
                     onCellValueChanged={handleCellValueChanged}
-                    rowSelection="multiple"
+                    getRowId={params => params.data.id}
+                    rowSelection={{ mode: 'multiRow' }}
                     animateRows={true}
                     pagination={true}
                     paginationPageSize={50}
+                    paginationPageSizeSelector={[10, 20, 50, 100]}
                     rowHeight={32}
                     headerHeight={48}
                 />

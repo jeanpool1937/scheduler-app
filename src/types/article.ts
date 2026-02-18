@@ -14,4 +14,5 @@ export interface Article {
     pesoPalanquilla: number;
     almacenDestino: string;
     comentarios: string;
+    id?: string;
 }

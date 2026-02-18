@@ -1,4 +1,3 @@
-
 import React, { useCallback, useMemo, useState } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import type { ColDef, RowDragEndEvent, ValueSetterParams, GridReadyEvent } from 'ag-grid-community';
@@ -1217,9 +1216,7 @@ export const ProductionScheduler: React.FC = () => {
                     columnDefs={columnDefs}
                     defaultColDef={defaultColDef}
                     rowDragManaged={true}
-                    rowSelection="multiple"
-                    rowDragMultiRow={true}
-                    rowDragEntireRow={false}
+                    rowSelection={{ mode: 'multiRow' }}
                     suppressRowClickSelection={true}
                     suppressCopyRowsToClipboard={true}
                     onRowDragEnd={onRowDragEnd}

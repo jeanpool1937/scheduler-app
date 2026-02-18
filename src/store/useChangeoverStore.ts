@@ -1,17 +1,18 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
 import type { ChangeoverRule } from '../types/changeover';
 import type { ProcessId } from '../types';
+import { supabase } from '../lib/supabaseClient';
 
 interface ChangeoverStore {
-    // Stores: Record<ProcessId, ChangeoverRule[]>
     rulesByProcess: Record<ProcessId, ChangeoverRule[]>;
+    loading: boolean;
 
-    // Actions require processId
-    setRules: (processId: ProcessId, rules: ChangeoverRule[]) => void;
-    addRule: (processId: ProcessId, rule: ChangeoverRule) => void;
-    updateRule: (processId: ProcessId, index: number, rule: ChangeoverRule) => void;
-    deleteRules: (processId: ProcessId, indices: number[]) => void;
+    // Actions
+    fetchRules: (processId: ProcessId) => Promise<void>;
+    setRules: (processId: ProcessId, rules: ChangeoverRule[]) => Promise<void>;
+    addRule: (processId: ProcessId, rule: ChangeoverRule) => Promise<void>;
+    updateRule: (processId: ProcessId, id: string, rule: Partial<ChangeoverRule>) => Promise<void>;
+    deleteRules: (processId: ProcessId, ids: string[]) => Promise<void>;
 
     // Helper
     getRules: (processId: ProcessId) => ChangeoverRule[];
@@ -23,53 +24,146 @@ const initialRulesState: Record<ProcessId, ChangeoverRule[]> = {
     'laminador3': [],
 };
 
-export const useChangeoverStore = create<ChangeoverStore>()(
-    persist(
-        (set, get) => ({
-            rulesByProcess: initialRulesState,
+const mapFromDb = (row: any): ChangeoverRule => ({
+    fromId: row.from_id,
+    toId: row.to_id,
+    durationHours: Number(row.duration_hours),
+    id: row.id
+});
 
-            getRules: (processId) => get().rulesByProcess[processId] || [],
+const mapToDb = (processId: ProcessId, rule: Partial<ChangeoverRule>) => ({
+    process_id: processId,
+    from_id: rule.fromId,
+    to_id: rule.toId,
+    duration_hours: rule.durationHours,
+});
 
-            setRules: (processId, rules) => set((state) => ({
-                rulesByProcess: {
-                    ...state.rulesByProcess,
-                    [processId]: rules
-                }
-            })),
+export const useChangeoverStore = create<ChangeoverStore>((set, get) => ({
+    rulesByProcess: initialRulesState,
+    loading: false,
 
-            addRule: (processId, rule) => set((state) => ({
-                rulesByProcess: {
-                    ...state.rulesByProcess,
-                    [processId]: [...(state.rulesByProcess[processId] || []), rule]
-                }
-            })),
+    getRules: (processId) => get().rulesByProcess[processId] || [],
 
-            updateRule: (processId, index, rule) => set((state) => {
-                const currentList = state.rulesByProcess[processId] || [];
-                const newList = [...currentList];
-                newList[index] = rule;
-                return {
-                    rulesByProcess: {
-                        ...state.rulesByProcess,
-                        [processId]: newList
-                    }
-                };
-            }),
+    fetchRules: async (processId) => {
+        set({ loading: true });
+        const { data, error } = await supabase
+            .from('scheduler_changeover_rules')
+            .select('*')
+            .eq('process_id', processId);
 
-            deleteRules: (processId, indices) => set((state) => {
-                const currentList = state.rulesByProcess[processId] || [];
-                const newList = currentList.filter((_, i) => !indices.includes(i));
-                return {
-                    rulesByProcess: {
-                        ...state.rulesByProcess,
-                        [processId]: newList
-                    }
-                };
-            }),
-        }),
-        {
-            name: 'changeover-storage-multi',
-            partialize: (state) => ({ rulesByProcess: state.rulesByProcess }),
+        if (error) {
+            console.error('Error fetching rules:', error);
+            set({ loading: false });
+            return;
         }
-    )
-);
+
+        const rules = data.map(mapFromDb);
+        set((state) => ({
+            rulesByProcess: {
+                ...state.rulesByProcess,
+                [processId]: rules
+            },
+            loading: false
+        }));
+    },
+
+    setRules: async (processId, rules) => {
+        // Bulk replace for a process
+        set({ loading: true });
+
+        // 1. Delete existing
+        const { error: delError } = await supabase
+            .from('scheduler_changeover_rules')
+            .delete()
+            .eq('process_id', processId);
+
+        if (delError) {
+            console.error('Error deleting old rules:', delError);
+            set({ loading: false });
+            return;
+        }
+
+        // 2. Insert new
+        const toInsert = rules.map(r => mapToDb(processId, r));
+        const { data, error } = await supabase
+            .from('scheduler_changeover_rules')
+            .insert(toInsert)
+            .select();
+
+        if (error) {
+            console.error('Error inserting rules:', error);
+            set({ loading: false });
+            return;
+        }
+
+        set((state) => ({
+            rulesByProcess: {
+                ...state.rulesByProcess,
+                [processId]: (data || []).map(mapFromDb)
+            },
+            loading: false
+        }));
+    },
+
+    addRule: async (processId, rule) => {
+        const { data, error } = await supabase
+            .from('scheduler_changeover_rules')
+            .insert(mapToDb(processId, rule))
+            .select()
+            .single();
+
+        if (error) {
+            console.error('Error adding rule:', error);
+            return;
+        }
+
+        set((state) => ({
+            rulesByProcess: {
+                ...state.rulesByProcess,
+                [processId]: [...(state.rulesByProcess[processId] || []), mapFromDb(data)]
+            }
+        }));
+    },
+
+    updateRule: async (processId, id, rule) => {
+        const { data, error } = await supabase
+            .from('scheduler_changeover_rules')
+            .update(mapToDb(processId, rule))
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) {
+            console.error('Error updating rule:', error);
+            return;
+        }
+
+        set((state) => ({
+            rulesByProcess: {
+                ...state.rulesByProcess,
+                [processId]: (state.rulesByProcess[processId] || []).map(r =>
+                    (r as any).id === id ? mapFromDb(data) : r
+                )
+            }
+        }));
+    },
+
+    deleteRules: async (processId, ids) => {
+        const { error } = await supabase
+            .from('scheduler_changeover_rules')
+            .delete()
+            .in('id', ids);
+
+        if (error) {
+            console.error('Error deleting rules:', error);
+            return;
+        }
+
+        set((state) => ({
+            rulesByProcess: {
+                ...state.rulesByProcess,
+                [processId]: (state.rulesByProcess[processId] || []).filter(r => !ids.includes((r as any).id))
+            }
+        }));
+    },
+}));

@@ -1,7 +1,7 @@
 import React from 'react';
 import { useStore } from '../store/useStore';
 import { Clock } from 'lucide-react';
-import type { WorkSchedule, DaySchedule } from '../types';
+import type { DaySchedule } from '../types';
 
 const DAY_NAMES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 

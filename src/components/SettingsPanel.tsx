@@ -30,9 +30,9 @@ export const SettingsPanel: React.FC = () => {
         setWorkSchedule
     } = useStore();
     const articles = useArticleStore((state) => state.getArticles(activeProcessId));
-    const setArticles = useArticleStore((state) => state.setArticles);
+    const { setArticles } = useArticleStore();
     const changeovers = useChangeoverStore((state) => state.getRules(activeProcessId));
-    const setRules = useChangeoverStore((state) => state.setRules);
+    const { setRules } = useChangeoverStore();
 
     const processNames: Record<string, string> = {
         laminador1: 'Laminador 1',

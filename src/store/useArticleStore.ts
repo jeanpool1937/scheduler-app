@@ -1,21 +1,21 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
 import type { Article } from '../types/article';
 import type { ProcessId } from '../types';
+import { supabase } from '../lib/supabaseClient';
 
 interface ArticleStore {
-    // Stores: Record<ProcessId, Article[]>
-    // We'll initialize with empty arrays for all known processes
     articlesByProcess: Record<ProcessId, Article[]>;
+    loading: boolean;
 
-    // Actions now require processId to know which list to update
-    setArticles: (processId: ProcessId, articles: Article[]) => void;
-    addArticle: (processId: ProcessId, article: Article) => void;
-    updateArticle: (processId: ProcessId, index: number, article: Article) => void;
-    deleteArticle: (processId: ProcessId, index: number) => void;
-    deleteArticles: (processId: ProcessId, indices: number[]) => void;
+    // Actions
+    fetchArticles: (processId: ProcessId) => Promise<void>;
+    addArticle: (processId: ProcessId, article: Article) => Promise<void>;
+    setArticles: (processId: ProcessId, articles: Article[]) => Promise<void>;
+    updateArticle: (processId: ProcessId, id: string, article: Partial<Article>) => Promise<void>;
+    deleteArticle: (processId: ProcessId, id: string) => Promise<void>;
+    deleteArticles: (processId: ProcessId, ids: string[]) => Promise<void>;
 
-    // Helper to get articles for current process
+    // Legacy support or quick helper
     getArticles: (processId: ProcessId) => Article[];
 }
 
@@ -25,65 +25,188 @@ const initialArticlesState: Record<ProcessId, Article[]> = {
     'laminador3': [],
 };
 
-export const useArticleStore = create<ArticleStore>()(
-    persist(
-        (set, get) => ({
-            articlesByProcess: initialArticlesState,
+// Map DB row to Article type
+const mapFromDb = (row: any): Article => ({
+    skuLaminacion: row.sku_laminacion,
+    ending: row.ending,
+    codigoProgramacion: row.codigo_programacion,
+    descripcion: row.descripcion,
+    skuPalanquilla: row.sku_palanquilla,
+    calidadPalanquilla: row.calidad_palanquilla,
+    ritmoTH: Number(row.ritmo_th),
+    rendimientoMetalico: Number(row.rendimiento_metalico),
+    fam: row.fam,
+    aciertoCalibracion: Number(row.acierto_calibracion),
+    idTablaCambioMedida: row.id_tabla_cambio_medida,
+    pesoPalanquilla: Number(row.peso_palanquilla),
+    almacenDestino: row.almacen_destino,
+    comentarios: row.comentarios,
+    // Store id for faster updates
+    id: row.id
+});
 
-            getArticles: (processId) => get().articlesByProcess[processId] || [],
+// Map Article type to DB row
+const mapToDb = (processId: ProcessId, article: Partial<Article>) => ({
+    process_id: processId,
+    sku_laminacion: article.skuLaminacion,
+    ending: article.ending,
+    codigo_programacion: article.codigoProgramacion,
+    descripcion: article.descripcion,
+    sku_palanquilla: article.skuPalanquilla,
+    calidad_palanquilla: article.calidadPalanquilla,
+    ritmo_th: article.ritmoTH,
+    rendimiento_metalico: article.rendimientoMetalico,
+    fam: article.fam,
+    acierto_calibracion: article.aciertoCalibracion,
+    id_tabla_cambio_medida: article.idTablaCambioMedida,
+    peso_palanquilla: article.pesoPalanquilla,
+    almacen_destino: article.almacenDestino,
+    comentarios: article.comentarios,
+});
 
-            setArticles: (processId, articles) => set((state) => ({
-                articlesByProcess: {
-                    ...state.articlesByProcess,
-                    [processId]: articles
-                }
-            })),
+export const useArticleStore = create<ArticleStore>((set, get) => ({
+    articlesByProcess: initialArticlesState,
+    loading: false,
 
-            addArticle: (processId, article) => set((state) => ({
-                articlesByProcess: {
-                    ...state.articlesByProcess,
-                    [processId]: [...(state.articlesByProcess[processId] || []), article]
-                }
-            })),
+    getArticles: (processId) => get().articlesByProcess[processId] || [],
 
-            updateArticle: (processId, index, article) => set((state) => {
-                const currentList = state.articlesByProcess[processId] || [];
-                const newList = [...currentList];
-                newList[index] = article;
-                return {
-                    articlesByProcess: {
-                        ...state.articlesByProcess,
-                        [processId]: newList
-                    }
-                };
-            }),
+    fetchArticles: async (processId) => {
+        set({ loading: true });
+        const { data, error } = await supabase
+            .from('scheduler_articles')
+            .select('*')
+            .eq('process_id', processId);
 
-            deleteArticle: (processId, index) => set((state) => {
-                const currentList = state.articlesByProcess[processId] || [];
-                const newList = [...currentList];
-                newList.splice(index, 1);
-                return {
-                    articlesByProcess: {
-                        ...state.articlesByProcess,
-                        [processId]: newList
-                    }
-                };
-            }),
-
-            deleteArticles: (processId, indices) => set((state) => {
-                const currentList = state.articlesByProcess[processId] || [];
-                const newList = currentList.filter((_, i) => !indices.includes(i));
-                return {
-                    articlesByProcess: {
-                        ...state.articlesByProcess,
-                        [processId]: newList
-                    }
-                };
-            }),
-        }),
-        {
-            name: 'article-storage-multi', // New storage key to avoid conflicts/bad hydration
-            partialize: (state) => ({ articlesByProcess: state.articlesByProcess }),
+        if (error) {
+            console.error('Error fetching articles:', error);
+            set({ loading: false });
+            return;
         }
-    )
-);
+
+        const articles = data.map(mapFromDb);
+        set((state) => ({
+            articlesByProcess: {
+                ...state.articlesByProcess,
+                [processId]: articles
+            },
+            loading: false
+        }));
+    },
+
+    addArticle: async (processId, article) => {
+        const { data, error } = await supabase
+            .from('scheduler_articles')
+            .insert(mapToDb(processId, article))
+            .select()
+            .single();
+
+        if (error) {
+            console.error('Error adding article:', error);
+            return;
+        }
+
+        set((state) => ({
+            articlesByProcess: {
+                ...state.articlesByProcess,
+                [processId]: [...(state.articlesByProcess[processId] || []), mapFromDb(data)]
+            }
+        }));
+    },
+
+    setArticles: async (processId, articles) => {
+        set({ loading: true });
+        // 1. Delete existing for this process
+        const { error: delError } = await supabase
+            .from('scheduler_articles')
+            .delete()
+            .eq('process_id', processId);
+
+        if (delError) {
+            console.error('Error deleting old articles:', delError);
+            set({ loading: false });
+            return;
+        }
+
+        // 2. Insert new
+        const toInsert = articles.map(a => mapToDb(processId, a));
+        const { data, error } = await supabase
+            .from('scheduler_articles')
+            .insert(toInsert)
+            .select();
+
+        if (error) {
+            console.error('Error inserting articles:', error);
+            set({ loading: false });
+            return;
+        }
+
+        set((state) => ({
+            articlesByProcess: {
+                ...state.articlesByProcess,
+                [processId]: (data || []).map(mapFromDb)
+            },
+            loading: false
+        }));
+    },
+
+    updateArticle: async (processId, id, article) => {
+        const { data, error } = await supabase
+            .from('scheduler_articles')
+            .update(mapToDb(processId, article))
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) {
+            console.error('Error updating article:', error);
+            return;
+        }
+
+        set((state) => ({
+            articlesByProcess: {
+                ...state.articlesByProcess,
+                [processId]: (state.articlesByProcess[processId] || []).map(a =>
+                    (a as any).id === id ? mapFromDb(data) : a
+                )
+            }
+        }));
+    },
+
+    deleteArticle: async (processId, id) => {
+        const { error } = await supabase
+            .from('scheduler_articles')
+            .delete()
+            .eq('id', id);
+
+        if (error) {
+            console.error('Error deleting article:', error);
+            return;
+        }
+
+        set((state) => ({
+            articlesByProcess: {
+                ...state.articlesByProcess,
+                [processId]: (state.articlesByProcess[processId] || []).filter(a => (a as any).id !== id)
+            }
+        }));
+    },
+
+    deleteArticles: async (processId, ids) => {
+        const { error } = await supabase
+            .from('scheduler_articles')
+            .delete()
+            .in('id', ids);
+
+        if (error) {
+            console.error('Error deleting articles:', error);
+            return;
+        }
+
+        set((state) => ({
+            articlesByProcess: {
+                ...state.articlesByProcess,
+                [processId]: (state.articlesByProcess[processId] || []).filter(a => !ids.includes((a as any).id))
+            }
+        }));
+    },
+}));
