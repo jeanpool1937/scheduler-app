@@ -28,7 +28,6 @@ interface WorkParams {
 }
 
 // --- CONFIGURATION ---
-const DEFAULT_MUTATION_RATE = 0.2;
 const DEFAULT_ELITISM_RATE = 0.1;
 const TOURNAMENT_SIZE = 5;
 const LOCAL_SEARCH_FREQUENCY = 10; // Run 2-Opt every N generations
@@ -138,7 +137,6 @@ function cruzarOX(p1: any[], p2: any[]): any[] {
     const end = Math.floor(Math.random() * (n - start)) + start;
 
     const hijo = new Array(n).fill(null);
-    const genesP1 = new Set(); // To track SKU presence if unique? 
     // Wait, items might have same SKU if split lots?
     // Assuming distinct objects or simple indices. Current implementation uses objects.
     // We should use object reference or a unique ID. 
