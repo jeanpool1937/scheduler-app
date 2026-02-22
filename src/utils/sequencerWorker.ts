@@ -307,7 +307,6 @@ function busquedaLocal(ind: Individual, params: WorkParams): Individual {
         const candidato = evaluar(nuevaSec, params);
         if (candidato.aptitud > mejorInd.aptitud) {
             mejorInd = candidato;
-            mejoro = true;
         }
     }
 
