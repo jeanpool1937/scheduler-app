@@ -15,7 +15,19 @@ const COLUMN_STATE_KEY = 'scheduler-column-state';
 
 export const ProductionScheduler: React.FC = () => {
     const activeProcessId = useStore((state) => state.activeProcessId);
-    const processData = useStore((state) => state.processes[state.activeProcessId]);
+    const processData = useStore((state) => state.processes[activeProcessId]);
+
+    // Guard clause to prevent crash during state transitions
+    if (!processData) {
+        return (
+            <div className="flex items-center justify-center h-full text-zinc-500 bg-zinc-50/50">
+                <div className="flex flex-col items-center gap-3">
+                    <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                    <p className="text-sm font-medium">Cargando datos del proceso...</p>
+                </div>
+            </div>
+        );
+    }
 
     const {
         schedule,
@@ -1216,8 +1228,7 @@ export const ProductionScheduler: React.FC = () => {
                     columnDefs={columnDefs}
                     defaultColDef={defaultColDef}
                     rowDragManaged={true}
-                    rowSelection={{ mode: 'multiRow' }}
-                    suppressRowClickSelection={true}
+                    rowSelection={{ mode: 'multiRow', enableClickSelection: false }}
                     suppressCopyRowsToClipboard={true}
                     onRowDragEnd={onRowDragEnd}
                     onCellValueChanged={onCellValueChanged}

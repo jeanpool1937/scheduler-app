@@ -17,6 +17,7 @@ export const KPIDashboard: React.FC = () => {
 
         const totalTime = totalProdTime + totalChangeover + totalStoppages;
         const efficiency = totalTime > 0 ? (totalProdTime / totalTime) * 100 : 0;
+        const hasSimulatedData = totalProdTime > 0 || totalChangeover > 0;
 
         // Count changeovers > 60 mins as "alerts" (example rule)
         const criticalAlerts = schedule.filter(item => (item.changeoverMinutes || 0) > 60).length;
@@ -24,7 +25,8 @@ export const KPIDashboard: React.FC = () => {
         return {
             totalTons,
             efficiency,
-            criticalAlerts
+            criticalAlerts,
+            hasSimulatedData
         };
     }, [schedule]);
 
@@ -49,9 +51,13 @@ export const KPIDashboard: React.FC = () => {
                 <div>
                     <h3 className="text-gray-500 text-xs font-semibold uppercase tracking-wider">Eficiencia Est.</h3>
                     <div className="mt-1 flex items-baseline gap-2">
-                        <span className="text-2xl font-bold text-gray-900">{stats.efficiency.toFixed(1)}%</span>
-                        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${stats.efficiency > 85 ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
-                            {stats.efficiency > 85 ? 'Óptimo' : 'Revisar'}
+                        <span className="text-2xl font-bold text-gray-900">
+                            {stats.hasSimulatedData ? `${stats.efficiency.toFixed(1)}%` : '—'}
+                        </span>
+                        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${!stats.hasSimulatedData ? 'bg-gray-100 text-gray-500' :
+                            stats.efficiency > 85 ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
+                            }`}>
+                            {!stats.hasSimulatedData ? 'Sin Simular' : stats.efficiency > 85 ? 'Óptimo' : 'Revisar'}
                         </span>
                     </div>
                 </div>

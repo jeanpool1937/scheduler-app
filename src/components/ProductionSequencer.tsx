@@ -22,6 +22,132 @@ interface DraftItem {
     poMes: number;
 }
 
+const ScenarioTradeoffChart: React.FC<{ scenarios: any[], activeId?: string }> = ({ scenarios, activeId }) => {
+    const data = scenarios
+        .filter(s => s.result)
+        .map(s => {
+            const res = s.result;
+            // The worker returns costoVentaPerdida and costoTiempoCambio
+            const cvp = (res.costoVentaPerdida || 0) / 10;
+            const ctc = (res.costoTiempoCambio || 0) / 10;
+            const total = cvp + ctc;
+            return {
+                label: s.label,
+                id: s.id,
+                cvp,
+                ctc,
+                total
+            };
+        });
+
+    if (data.length === 0) return null;
+
+    const maxVal = Math.max(...data.map(d => d.total), 1);
+
+    return (
+        <div className="bg-white p-6 md:p-10 rounded-[2rem] border border-slate-200 shadow-2xl mb-8 animate-in fade-in slide-in-from-top-4 duration-700">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12 text-left">
+                <div className="flex items-center gap-4">
+                    <div className="p-3 bg-[#004DB4] rounded-2xl text-white shadow-xl shadow-blue-100 ring-4 ring-blue-50">
+                        <BarChart3 size={24} />
+                    </div>
+                    <div>
+                        <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">
+                            Balance Económico
+                        </h3>
+                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em] mt-1 opacity-70">
+                            Pérdida por Venta vs Costo de Cambio
+                        </p>
+                    </div>
+                </div>
+
+                <div className="flex flex-wrap gap-6 bg-slate-50/80 backdrop-blur-sm p-4 rounded-2xl border border-slate-100/50">
+                    <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full bg-blue-500 shadow-sm shadow-blue-200 animate-pulse"></div>
+                        <span className="text-[11px] font-black text-slate-500 uppercase">Venta Perdida</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full bg-orange-400 shadow-sm shadow-orange-200"></div>
+                        <span className="text-[11px] font-black text-slate-500 uppercase">Tiempo Cambio</span>
+                    </div>
+                </div>
+            </div>
+
+            <div className="relative h-72 w-full flex items-end justify-around px-2 md:px-12 pt-10">
+                {/* Guidelines */}
+                <div className="absolute inset-x-8 inset-y-0 flex flex-col justify-between py-2 pointer-events-none">
+                    {[0, 25, 50, 75, 100].map(val => (
+                        <div key={val} className="w-full border-t border-slate-100 border-dashed relative">
+                        </div>
+                    ))}
+                </div>
+
+                {data.map((d) => {
+                    const hTotal = (d.total / maxVal) * 100;
+                    const hVP = d.total > 0 ? (d.cvp / d.total) * 100 : 0;
+                    const hTC = d.total > 0 ? (d.ctc / d.total) * 100 : 0;
+                    const isActive = activeId === d.id;
+
+                    return (
+                        <div key={d.id} className="flex-1 flex flex-col items-center group relative h-full justify-end max-w-[200px] gap-6">
+                            {/* Bar Wrapper */}
+                            <div
+                                className={`w-20 md:w-28 relative flex flex-col justify-end transition-all duration-700 ease-[cubic-bezier(0.34,1.56,0.64,1)] group-hover:scale-110 group-hover:-translate-y-2 cursor-pointer ${isActive ? 'scale-105' : 'opacity-80'
+                                    }`}
+                                style={{ height: `${Math.max(hTotal, 4)}%` }}
+                            >
+                                {/* Total Value Label */}
+                                <div className="absolute -top-10 left-0 right-0 text-center">
+                                    <span className="text-[11px] font-black text-slate-800 bg-white px-3 py-1.5 rounded-full border border-slate-100 shadow-lg whitespace-nowrap">
+                                        ${d.total.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                                    </span>
+                                </div>
+
+                                {/* Stack Components */}
+                                <div
+                                    className="w-full bg-gradient-to-t from-orange-500 to-orange-400 rounded-t-xl relative z-10 transition-all duration-500 shadow-lg group-hover:shadow-orange-200"
+                                    style={{ height: `${hTC}%` }}
+                                >
+                                    {hTC > 20 && (
+                                        <div className="absolute inset-0 flex items-center justify-center">
+                                            <span className="text-[9px] font-black text-white/90 uppercase [writing-mode:vertical-lr] rotate-180">{hTC.toFixed(0)}% TC</span>
+                                        </div>
+                                    )}
+                                </div>
+                                <div
+                                    className={`w-full bg-gradient-to-t from-blue-700 to-blue-500 relative z-10 transition-all duration-500 shadow-lg group-hover:shadow-blue-200 ${hTC < 1 ? 'rounded-t-xl' : ''
+                                        }`}
+                                    style={{ height: `${hVP}%` }}
+                                >
+                                    {hVP > 20 && (
+                                        <div className="absolute inset-0 flex items-center justify-center">
+                                            <span className="text-[9px] font-black text-white/90 uppercase [writing-mode:vertical-lr] rotate-180 text-nowrap">{hVP.toFixed(0)}% VP</span>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Bottom Reflection/Shadow */}
+                                <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 w-4/5 h-2 bg-slate-900/10 rounded-full blur-[4px] scale-x-90 opacity-40"></div>
+                            </div>
+
+                            {/* Label Area */}
+                            <div className="flex flex-col items-center gap-2">
+                                <span className={`text-[11px] font-black uppercase tracking-tighter text-center transition-colors duration-300 ${isActive ? 'text-blue-700' : 'text-slate-400 group-hover:text-slate-600'
+                                    }`}>
+                                    {d.label}
+                                </span>
+                                {isActive && (
+                                    <div className="w-8 h-1 bg-blue-600 rounded-full shadow-lg shadow-blue-200 animate-in zoom-in slide-in-from-bottom-2"></div>
+                                )}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+};
+
 export const ProductionSequencer: React.FC = () => {
     const activeProcessId = useStore((state) => state.activeProcessId);
     const processData = useStore((state) => state.processes[activeProcessId]);
@@ -33,10 +159,28 @@ export const ProductionSequencer: React.FC = () => {
     const saveSequencerConfig = useStore((state) => state.saveSequencerConfig);
 
     const [draftItems, setDraftItems] = useState<DraftItem[]>([]);
-    const [isCalculating, setIsCalculating] = useState(false);
-    const [progress, setProgress] = useState(0);
-    const [result, setResult] = useState<any>(null);
-    const workerRef = useRef<Worker | null>(null);
+    const [scenarios, setScenarios] = useState<Record<string, import('../types').OptimizationScenario>>({
+        balanced: { id: 'balanced', label: 'Equilibrado', result: null, status: 'idle', progress: 0 },
+        min_lost_sales: { id: 'min_lost_sales', label: 'Mín. Venta Perdida', result: null, status: 'idle', progress: 0 },
+        min_changeovers: { id: 'min_changeovers', label: 'Mín. Tiempos de Cambio', result: null, status: 'idle', progress: 0 }
+    });
+    const [activeScenarioId, setActiveScenarioId] = useState<'balanced' | 'min_lost_sales' | 'min_changeovers'>('balanced');
+
+    const isCalculating = useMemo(() =>
+        Object.values(scenarios).some(s => s.status === 'calculating'),
+        [scenarios]);
+
+    const totalProgress = useMemo(() => {
+        const values = Object.values(scenarios);
+        return Math.round(values.reduce((acc, s) => acc + s.progress, 0) / values.length);
+    }, [scenarios]);
+
+    const activeResult = scenarios[activeScenarioId]?.result;
+    const workerRefs = useRef<Record<string, Worker | null>>({
+        balanced: null,
+        min_lost_sales: null,
+        min_changeovers: null
+    });
 
     // Params state
     const [params, setParams] = useState({
@@ -51,12 +195,15 @@ export const ProductionSequencer: React.FC = () => {
 
     useEffect(() => {
         return () => {
-            if (workerRef.current) workerRef.current.terminate();
+            Object.values(workerRefs.current).forEach(w => w?.terminate());
         };
     }, []);
 
     const idCambiosUnicos = useMemo(() => {
-        return Array.from(new Set(draftItems.map(it => it.idTablaCambioMedida).filter(Boolean))) as string[];
+        const ids = draftItems
+            .map(it => String(it.idTablaCambioMedida || '').trim())
+            .filter(id => id && id !== 'S/N' && id !== '0' && id !== '-1');
+        return Array.from(new Set(ids)).sort() as string[];
     }, [draftItems]);
 
     const fetchSapData = useSapStore((state) => state.fetchSapData);
@@ -71,7 +218,8 @@ export const ProductionSequencer: React.FC = () => {
         if (processData.sequencerConfig) {
             if (processData.sequencerConfig.draftItems) setDraftItems(processData.sequencerConfig.draftItems);
             if (processData.sequencerConfig.params) setParams(processData.sequencerConfig.params);
-            if (processData.sequencerConfig.lastResult) setResult(processData.sequencerConfig.lastResult);
+            if (processData.sequencerConfig.scenarios) setScenarios(processData.sequencerConfig.scenarios);
+            if (processData.sequencerConfig.activeScenarioId) setActiveScenarioId(processData.sequencerConfig.activeScenarioId as any);
         }
     }, [activeProcessId]);
 
@@ -81,11 +229,13 @@ export const ProductionSequencer: React.FC = () => {
             saveSequencerConfig({
                 draftItems,
                 params,
-                lastResult: result
+                lastResult: activeResult,
+                scenarios,
+                activeScenarioId
             });
         }, 2000);
         return () => clearTimeout(timeout);
-    }, [draftItems, params, result, saveSequencerConfig]);
+    }, [draftItems, params, scenarios, activeScenarioId, saveSequencerConfig]);
 
 
     // ... (rest of state)
@@ -108,13 +258,22 @@ export const ProductionSequencer: React.FC = () => {
 
             if (!rawSku || isNaN(cleanQty)) return null;
 
-            // Match with master articles
-            const art = articles.find(a =>
+            // Match with master articles (SPECIFIC TO ACTIVE PROCESS)
+            let art = articles.find(a =>
                 String(a.codigoProgramacion || '').trim() === rawSku ||
                 String(a.skuLaminacion || '').trim() === rawSku
             );
 
-            // Match with SAP data
+            // FALLBACK: Global Search across ALL laminators
+            if (!art) {
+                const allArticles = Object.values(useArticleStore.getState().articlesByProcess).flat();
+                art = allArticles.find(a =>
+                    String(a.codigoProgramacion || '').trim() === rawSku ||
+                    String(a.skuLaminacion || '').trim() === rawSku
+                );
+            }
+
+            // Match with SAP data (GLOBAL DATA)
             const sapItem = sapData[rawSku] || (art && (sapData[art.codigoProgramacion || ''] || sapData[art.skuLaminacion || '']));
 
             const pace = art?.ritmoTH || 0;
@@ -149,8 +308,6 @@ export const ProductionSequencer: React.FC = () => {
             return;
         }
 
-        setIsCalculating(true);
-        // ... (rest of logic) ...
         const idToIndexMap: Record<string, number> = {};
         idCambiosUnicos.forEach((id, idx) => { idToIndexMap[id] = idx; });
 
@@ -158,10 +315,13 @@ export const ProductionSequencer: React.FC = () => {
         const matrix: number[][] = Array(matrixSize).fill(0).map(() => Array(matrixSize).fill(0));
 
         rules.forEach(rule => {
-            const fromIdx = idToIndexMap[String(rule.fromId).trim()];
-            const toIdx = idToIndexMap[String(rule.toId).trim()];
+            const f = String(rule.fromId || '').trim();
+            const t = String(rule.toId || '').trim();
+            const fromIdx = idToIndexMap[f];
+            const toIdx = idToIndexMap[t];
+
             if (fromIdx !== undefined && toIdx !== undefined) {
-                matrix[fromIdx][toIdx] = rule.durationHours || 0;
+                matrix[fromIdx][toIdx] = Number(rule.durationHours) || 0;
             }
         });
 
@@ -169,23 +329,41 @@ export const ProductionSequencer: React.FC = () => {
         const itemVentaDiaria = draftItems.map(it => it.ventaDiaria);
         const itemDiasStock = draftItems.map(it => it.diasStock);
         const itemDiasFabricacion = draftItems.map(it => it.diasFabricacion);
-        const itemIdCambiosIdx = draftItems.map(it => idToIndexMap[it.idTablaCambioMedida]);
+        const itemIdCambiosIdx = draftItems.map(it => {
+            const id = String(it.idTablaCambioMedida || '').trim();
+            const mappedIdx = idToIndexMap[id];
+            return mappedIdx !== undefined ? mappedIdx : -1;
+        });
 
-        try {
-            // ... (worker instantiation) ...
-            workerRef.current = new Worker(new URL('../utils/sequencerWorker.ts', import.meta.url), { type: 'module' });
+        const runScenario = (scenarioId: 'balanced' | 'min_lost_sales' | 'min_changeovers', pesoVenta: number) => {
+            setScenarios(prev => ({
+                ...prev,
+                [scenarioId]: { ...prev[scenarioId], status: 'calculating', progress: 0 }
+            }));
 
-            workerRef.current.onmessage = (e) => {
+            if (workerRefs.current[scenarioId]) workerRefs.current[scenarioId]?.terminate();
+
+            const worker = new Worker(new URL('../utils/sequencerWorker.ts', import.meta.url), { type: 'module' });
+            workerRefs.current[scenarioId] = worker;
+
+            worker.onmessage = (e) => {
                 const { type, progress, result: workerResult } = e.data;
-                if (type === 'progress') setProgress(progress);
-                else if (type === 'complete') {
-                    setResult(workerResult);
-                    setIsCalculating(false);
-                    workerRef.current?.terminate();
+                if (type === 'progress') {
+                    setScenarios(prev => ({
+                        ...prev,
+                        [scenarioId]: { ...prev[scenarioId], progress }
+                    }));
+                } else if (type === 'complete') {
+                    setScenarios(prev => ({
+                        ...prev,
+                        [scenarioId]: { ...prev[scenarioId], status: 'completed', progress: 100, result: workerResult }
+                    }));
+                    worker.terminate();
+                    workerRefs.current[scenarioId] = null;
                 }
             };
 
-            workerRef.current.postMessage({
+            worker.postMessage({
                 type: 'run',
                 params: {
                     matrizCambioMedida: matrix,
@@ -200,7 +378,7 @@ export const ProductionSequencer: React.FC = () => {
                     idCambios: itemIdCambiosIdx,
                     originalIdCambios: draftItems.map(it => it.idTablaCambioMedida),
                     horasDia: 24,
-                    pesoVenta: params.pesoVenta,
+                    pesoVenta,
                     costoToneladaPerdida: params.costoVP,
                     costoHoraCambio: params.costoTC,
                     tamanoPoblacion: params.poblacion,
@@ -209,17 +387,18 @@ export const ProductionSequencer: React.FC = () => {
                     tasaElitismo: params.tasaElitismo
                 }
             });
-        } catch (e) {
-            console.error(e);
-            setIsCalculating(false);
-        }
+        };
+
+        runScenario('balanced', params.pesoVenta);
+        runScenario('min_lost_sales', 1.0);
+        runScenario('min_changeovers', 0.0);
     };
 
     const handleApply = (mode: 'replace' | 'append') => {
-        if (!result) return;
+        if (!activeResult) return;
 
-        const optimizedItems = result.secuencia.map((item: any, idx: number) => {
-            const draftId = result.params_ids[item.sku];
+        const optimizedItems = activeResult.secuencia.map((item: any, idx: number) => {
+            const draftId = activeResult.params_ids[item.sku];
             const draft = draftItems.find(d => d.id === draftId);
             return {
                 id: crypto.randomUUID(), // New DB ID
@@ -238,7 +417,13 @@ export const ProductionSequencer: React.FC = () => {
 
         recalculateSchedule();
         alert(`¡Secuencia ${mode === 'replace' ? 'reemplazada' : 'añadida'} correctamente al Plan Mensual!`);
-        setResult(null);
+        setScenarios(prev => {
+            const next = { ...prev };
+            Object.keys(next).forEach(k => {
+                next[k] = { ...next[k], result: null, status: 'idle', progress: 0 };
+            });
+            return next;
+        });
         setDraftItems([]);
     };
 
@@ -257,7 +442,15 @@ export const ProductionSequencer: React.FC = () => {
                         <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 border border-blue-200 text-blue-700 rounded-lg shadow-sm text-xs font-black animate-pulse uppercase tracking-widest">
                             <LayoutList size={14} /> Pega con Ctrl+V
                         </div>
-                        <button onClick={() => { setDraftItems([]); setResult(null); }} className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors border border-red-100 shadow-sm" title="Limpiar todo">
+                        <button onClick={() => {
+                            setDraftItems([]); setScenarios(prev => {
+                                const next = { ...prev };
+                                Object.keys(next).forEach(k => {
+                                    next[k] = { ...next[k], result: null, status: 'idle', progress: 0 };
+                                });
+                                return next;
+                            });
+                        }} className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors border border-red-100 shadow-sm" title="Limpiar todo">
                             <Trash2 size={20} />
                         </button>
                         <div className="h-10 w-px bg-gray-200 mx-1"></div>
@@ -305,23 +498,71 @@ export const ProductionSequencer: React.FC = () => {
                     <div className="relative w-40 h-40 flex items-center justify-center mb-8">
                         <svg className="w-full h-full transform -rotate-90">
                             <circle cx="80" cy="80" r="70" stroke="currentColor" strokeWidth="10" fill="transparent" className="text-gray-100" />
-                            <circle cx="80" cy="80" r="70" stroke="currentColor" strokeWidth="10" fill="transparent" className="text-blue-600 transition-all duration-300" strokeDasharray={Math.PI * 140} strokeDashoffset={Math.PI * 140 * (1 - progress / 100)} strokeLinecap="round" />
+                            <circle cx="80" cy="80" r="70" stroke="currentColor" strokeWidth="10" fill="transparent" className="text-blue-600 transition-all duration-300" strokeDasharray={Math.PI * 140} strokeDashoffset={Math.PI * 140 * (1 - totalProgress / 100)} strokeLinecap="round" />
                         </svg>
                         <div className="absolute inset-0 flex flex-col items-center justify-center">
-                            <span className="text-4xl font-black text-gray-800">{progress}%</span>
-                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Calculando</span>
+                            <span className="text-4xl font-black text-gray-800">{totalProgress}%</span>
+                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Optimizando</span>
                         </div>
                     </div>
                 </div>
-            ) : result ? (
+            ) : activeResult ? (
                 <div className="space-y-6 pb-12 animate-in slide-in-from-bottom-4">
+                    {/* Scenario Switcher Card */}
+                    <div className="bg-white/40 backdrop-blur-md p-1.5 rounded-2xl border border-white/50 shadow-sm flex gap-2">
+                        {(Object.values(scenarios) as import('../types').OptimizationScenario[]).map((s) => (
+                            <button
+                                key={s.id}
+                                onClick={() => setActiveScenarioId(s.id as any)}
+                                className={`flex-1 p-4 rounded-xl transition-all relative overflow-hidden group border ${activeScenarioId === s.id
+                                    ? 'bg-white border-blue-200 shadow-md ring-1 ring-blue-500/10'
+                                    : 'hover:bg-white/50 border-transparent text-gray-400'
+                                    }`}
+                            >
+                                <div className="flex flex-col gap-1 relative z-10 text-left">
+                                    <span className={`text-[10px] font-black uppercase tracking-tighter ${activeScenarioId === s.id ? 'text-blue-600' : 'text-gray-400'}`}>
+                                        {s.label}
+                                    </span>
+                                    {s.result && (
+                                        <div className="flex flex-col gap-2">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-lg font-black text-gray-800">
+                                                    ${(Math.abs(s.result.costoTotal / 10)).toLocaleString()}
+                                                </span>
+                                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${activeScenarioId === s.id ? 'bg-blue-50 text-blue-600' : 'bg-gray-100 text-gray-400'
+                                                    }`}>
+                                                    {((s.result.tiempoProduccionTotal * 24 / (s.result.tiempoProduccionTotal * 24 + s.result.tiempoTotalCambio)) * 100).toFixed(1)}% Efi
+                                                </span>
+                                            </div>
+                                            <div className="flex items-center gap-2 text-[9px] font-bold text-gray-400 uppercase tracking-tighter">
+                                                <Clock size={10} className="text-orange-400" />
+                                                T. Cambio: <span className="text-orange-600">{s.result.tiempoTotalCambio.toFixed(1)}h</span>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                                {activeScenarioId === s.id && (
+                                    <div className="absolute top-0 right-0 p-2 text-blue-500">
+                                        <CheckCircle2 size={16} />
+                                    </div>
+                                )}
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* Comparison Chart */}
+                    <ScenarioTradeoffChart
+                        scenarios={Object.values(scenarios)}
+                        activeId={activeScenarioId}
+                    />
+
                     {/* Innovation Strategy: Smart Explainer */}
                     <SmartExplainer
                         stats={{
-                            totalTime: result.tiempoProduccionTotal * 24 + result.tiempoTotalCambio,
-                            totalTonnage: result.params_cant.reduce((a: any, b: any) => a + b, 0),
-                            changeovers: result.secuencia.length,
-                            avgChangeoverTime: result.tiempoTotalCambio / result.secuencia.length * 60
+                            totalTime: activeResult.tiempoProduccionTotal * 24 + activeResult.tiempoTotalCambio,
+                            totalTonnage: activeResult.params_cant.reduce((a: any, b: any) => a + b, 0),
+                            changeovers: activeResult.secuencia.length,
+                            avgChangeoverTime: activeResult.tiempoTotalCambio / activeResult.secuencia.length * 60
                         }}
                         onClose={() => { }}
                     />
@@ -331,17 +572,17 @@ export const ProductionSequencer: React.FC = () => {
                         <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden group">
                             <div className="absolute top-0 right-0 p-3 text-blue-50 group-hover:text-blue-100 transition-colors"><Clock size={40} /></div>
                             <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block">T. Cambio Muerto</span>
-                            <div className="text-2xl font-black text-blue-600">{(result.tiempoTotalCambio).toFixed(1)} h</div>
+                            <div className="text-2xl font-black text-blue-600">{(activeResult.tiempoTotalCambio).toFixed(1)} h</div>
                         </div>
                         <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden group">
                             <div className="absolute top-0 right-0 p-3 text-green-50 group-hover:text-green-100 transition-colors"><Gauge size={40} /></div>
                             <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block">Eficiencia</span>
-                            <div className="text-2xl font-black text-green-600">{((result.tiempoProduccionTotal * 24 / (result.tiempoProduccionTotal * 24 + result.tiempoTotalCambio)) * 100).toFixed(1)}%</div>
+                            <div className="text-2xl font-black text-green-600">{((activeResult.tiempoProduccionTotal * 24 / (activeResult.tiempoProduccionTotal * 24 + activeResult.tiempoTotalCambio)) * 100).toFixed(1)}%</div>
                         </div>
                         <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden group">
                             <div className="absolute top-0 right-0 p-3 text-orange-50 group-hover:text-orange-100 transition-colors"><TrendingDown size={40} /></div>
-                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block">Ahorro Estimado</span>
-                            <div className="text-2xl font-black text-orange-600">${(Math.abs(result.costoTotal / 10)).toLocaleString()}</div>
+                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block">Impacto Económico</span>
+                            <div className="text-2xl font-black text-orange-600">${(Math.abs(activeResult.costoTotal / 10)).toLocaleString()}</div>
                         </div>
                         <div className="bg-gradient-to-br from-[#004DB4] to-[#003d91] p-5 rounded-xl shadow-lg flex flex-col justify-center items-center text-white gap-3 group relative overflow-hidden">
                             <div className="flex gap-2 w-full relative z-10">
@@ -371,21 +612,41 @@ export const ProductionSequencer: React.FC = () => {
                                         <th className="px-6 py-3">SKU</th>
                                         <th className="px-6 py-3">Descripción</th>
                                         <th className="px-6 py-3 text-right">Cant. (Tn)</th>
+                                        <th className="px-6 py-3 text-right text-orange-600">T. Cambio (h)</th>
+                                        <th className="px-6 py-3 text-right">Stock</th>
+                                        <th className="px-6 py-3 text-right">Venta D.</th>
+                                        <th className="px-6 py-3 text-right">Cobertura</th>
+                                        <th className="px-6 py-3 text-right">Días Fab.</th>
                                         <th className="px-6 py-3">ID Cambio</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {result.secuencia.map((item: any, idx: number) => {
+                                    {activeResult.secuencia.map((item: any, idx: number) => {
                                         const originalIdx = item.sku;
+                                        const draftId = activeResult.params_ids[originalIdx];
+                                        const draft = draftItems.find(d => d.id === draftId);
+
                                         return (
                                             <tr key={idx} className="border-b border-slate-100 hover:bg-blue-50/30 transition-colors group">
                                                 <td className="px-6 py-3 font-bold text-slate-400">{idx + 1}</td>
-                                                <td className="px-6 py-3 font-bold text-slate-800 tracking-tight">{result.params_skus[originalIdx]}</td>
-                                                <td className="px-6 py-3 text-slate-500 uppercase text-[10px] font-medium">{result.params_desc[originalIdx]}</td>
-                                                <td className="px-6 py-3 text-right font-mono font-bold text-blue-700">{result.params_cant[originalIdx].toLocaleString()}</td>
+                                                <td className="px-6 py-3 font-bold text-slate-800 tracking-tight">{activeResult.params_skus[originalIdx]}</td>
+                                                <td className="px-6 py-3 text-slate-500 uppercase text-[10px] font-medium">{activeResult.params_desc[originalIdx]}</td>
+                                                <td className="px-6 py-3 text-right font-mono font-bold text-blue-700">{activeResult.params_cant[originalIdx].toLocaleString()}</td>
+                                                <td className="px-6 py-3 text-right font-mono font-bold text-orange-600 bg-orange-50/50">
+                                                    {(activeResult.tiemposCambio?.[idx] || 0) > 0 ? (activeResult.tiemposCambio[idx]).toFixed(1) : '-'}
+                                                </td>
+
+                                                {/* Restored Columns */}
+                                                <td className="px-6 py-3 text-right font-mono text-[10px] text-slate-500">{(draft?.stockInicial || 0).toFixed(1)}</td>
+                                                <td className="px-6 py-3 text-right font-mono text-[10px] text-slate-500">{(draft?.ventaDiaria || 0).toFixed(3)}</td>
+                                                <td className={`px-6 py-3 text-right font-mono text-[10px] font-bold ${(draft?.diasStock || 0) < 7 ? 'text-red-500' : 'text-green-600'}`}>
+                                                    {(draft?.diasStock || 0) > 365 ? '>365' : (draft?.diasStock || 0).toFixed(1)}
+                                                </td>
+                                                <td className="px-6 py-3 text-right font-mono text-[10px] text-slate-500">{(draft?.diasFabricacion || 0).toFixed(2)} d</td>
+
                                                 <td className="px-6 py-3">
                                                     <span className="px-2 py-0.5 bg-slate-100 rounded text-[10px] font-bold text-slate-400 group-hover:bg-blue-100 group-hover:text-blue-500 transition-colors">
-                                                        {result.params_idCambios[originalIdx]}
+                                                        {activeResult.params_idCambios[originalIdx]}
                                                     </span>
                                                 </td>
                                             </tr>

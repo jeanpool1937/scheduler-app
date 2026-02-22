@@ -138,7 +138,15 @@ export const ChangeoverMaster: React.FC = () => {
             {/* Header Redesign */}
             <div className="flex flex-col gap-4 mb-4 bg-white p-4 rounded-lg shadow-sm border border-gray-200">
                 <div className="flex justify-between items-center">
-                    <h2 className="text-xl font-bold text-gray-800 tracking-tight">Matriz de Tiempos de Cambio</h2>
+                    <div className="flex flex-col">
+                        <h2 className="text-xl font-bold text-gray-800 tracking-tight">Matriz de Tiempos de Cambio</h2>
+                        <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-[10px] font-black uppercase tracking-widest text-orange-600 bg-orange-50 px-2 py-0.5 rounded border border-orange-100">
+                                {activeProcessId.replace('laminador', 'Laminador ')}
+                            </span>
+                            <span className="text-[10px] font-bold text-gray-400 uppercase">Reglas específicas por proceso</span>
+                        </div>
+                    </div>
 
                     <div className="flex items-center gap-2">
                         {/* Global Search */}

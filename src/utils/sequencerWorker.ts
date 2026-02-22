@@ -37,30 +37,85 @@ const LOCAL_SEARCH_INTENSITY = 0.2; // % of population to apply LS
 interface Individual {
     secuencia: any[];
     aptitud: number;
+    costoVP: number;
+    costoTC: number;
     costos: {
         tiempoTotalCambio: number;
         ventaPerdidaTotal: number;
         tiempoAcumulado: number;
+        tiemposCambio: number[]; // Changeover time for EACH item (0 for first)
     };
 }
 
 // --- CORE FUNCTIONS ---
 
-function generarSecuenciaDetallada(produccionTn: number[], diasStock: number[]) {
-    // Initial heuristic: Sort by days of stock (Earliest Due Date equivalent)
-    const productosOrdenados = diasStock.map((dias, idx) => ({ producto: idx, dias })).sort((a, b) => a.dias - b.dias);
+/**
+ * Heuristic 1: Earliest Due Date (EDD) - Priority for Min Lost Sales
+ */
+function generarSecuenciaEDD(produccionTn: number[], diasStock: number[]) {
+    const sorted = diasStock.map((dias, idx) => ({ producto: idx, dias })).sort((a, b) => a.dias - b.dias);
+    return sorted.map(({ producto }) => ({ sku: producto, sublote: 1, tamano: produccionTn[producto] }));
+}
+
+/**
+ * Heuristic 2: Nearest Neighbor - Priority for Min Changeover
+ */
+function generarSecuenciaNearestNeighbor(produccionTn: number[], idCambios: number[], matriz: number[][]) {
+    const n = produccionTn.length;
+    const items = Array.from({ length: n }, (_, i) => i);
+    const secuencia: any[] = [];
+    let current = items[Math.floor(Math.random() * n)];
+    secuencia.push({ sku: current, sublote: 1, tamano: produccionTn[current] });
+    const visitados = new Set([current]);
+
+    while (visitados.size < n) {
+        let bestNext = -1;
+        let minTC = Infinity;
+
+        for (let i = 0; i < n; i++) {
+            if (visitados.has(i)) continue;
+            const fromIdx = idCambios[current];
+            const toIdx = idCambios[i];
+            const tc = (fromIdx !== -1 && toIdx !== -1) ? (matriz[fromIdx]?.[toIdx] || 0) : 0;
+
+            if (tc < minTC) {
+                minTC = tc;
+                bestNext = i;
+            } else if (tc === minTC && Math.random() > 0.5) {
+                bestNext = i;
+            }
+        }
+
+        if (bestNext !== -1) {
+            current = bestNext;
+            secuencia.push({ sku: current, sublote: 1, tamano: produccionTn[current] });
+            visitados.add(current);
+        } else break;
+    }
+    return secuencia;
+}
+
+function generarSecuenciaDetallada(produccionTn: number[], diasStock: number[], idCambios: number[], matriz: number[][], mode: 'balanced' | 'min_lost_sales' | 'min_changeovers') {
     let secuencia: any[] = [];
 
-    for (const { producto } of productosOrdenados) {
-        secuencia.push({ sku: producto, sublote: 1, tamano: produccionTn[producto] });
+    if (mode === 'min_lost_sales') {
+        secuencia = generarSecuenciaEDD(produccionTn, diasStock);
+    } else if (mode === 'min_changeovers') {
+        secuencia = generarSecuenciaNearestNeighbor(produccionTn, idCambios, matriz);
+    } else {
+        // Balanced: Mix 
+        secuencia = Math.random() > 0.5
+            ? generarSecuenciaEDD(produccionTn, diasStock)
+            : generarSecuenciaNearestNeighbor(produccionTn, idCambios, matriz);
     }
 
-    // Shuffle significantly to create diversity, but keep some order for others
-    // We want a mix of random and EDD (Earliest Due Date)
-    if (Math.random() > 0.3) {
-        for (let i = secuencia.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [secuencia[i], secuencia[j]] = [secuencia[j], secuencia[i]];
+    // Add noise for GA diversity (Shuffle 20% of items)
+    if (Math.random() > 0.1) {
+        const swapCount = Math.floor(secuencia.length * 0.2);
+        for (let i = 0; i < swapCount; i++) {
+            const a = Math.floor(Math.random() * secuencia.length);
+            const b = Math.floor(Math.random() * secuencia.length);
+            [secuencia[a], secuencia[b]] = [secuencia[b], secuencia[a]];
         }
     }
     return secuencia;
@@ -72,57 +127,69 @@ function calcularValores(secuencia: any[], matriz: number[][], ventaDiaria: numb
     const tamanoTotal: Record<number, number> = {};
     for (const { sku, tamano } of secuencia) tamanoTotal[sku] = (tamanoTotal[sku] || 0) + tamano;
 
+    const tiemposCambio: number[] = new Array(secuencia.length).fill(0);
+
     for (let i = 0; i < secuencia.length; i++) {
         const { sku, tamano } = secuencia[i];
         if (i > 0) {
             const prevSku = secuencia[i - 1].sku;
             const fromIdx = idCambios[prevSku];
             const toIdx = idCambios[sku];
-            const tc = matriz[fromIdx] && matriz[fromIdx][toIdx] !== undefined ? matriz[fromIdx][toIdx] : 0;
+
+            let tc = 0;
+            if (fromIdx !== undefined && fromIdx !== -1 && toIdx !== undefined && toIdx !== -1) {
+                tc = matriz[fromIdx] && matriz[fromIdx][toIdx] !== undefined ? matriz[fromIdx][toIdx] : 0;
+            }
+
+            tiemposCambio[i] = tc; // Track individual TC
             tiempoTotalCambio += tc;
             tiempoAcumulado += tc;
         }
 
         // Calculate Stockouts
-        // If accumulated time > stock days, we are losing sales
         const diasRotura = Math.max(0, tiempoAcumulado - stockActual[sku]);
         ventaPerdidaTotal += diasRotura * ventaDiaria[sku];
 
         // Production Time
-        const diasFabPonderado = diasFabricacion[sku] * (tamano / tamanoTotal[sku]);
+        const diasFabPonderado = diasFabricacion[sku] * (tamano / (tamanoTotal[sku] || 1));
 
-        // Replenish Stock (Logic: produced amount / daily sale = simplified days added)
-        // Note: In reality, stock is added at END of production, so it doesn't help current iteration's stockout
+        // Replenish Stock
         const diasStockAdd = ventaDiaria[sku] > 0 ? tamano / ventaDiaria[sku] : 999;
-
-        // Update state mainly for next products consumption? 
-        // Actually, this simple model assumes stock is consumed by TIME, not by other products.
-        // Independent demand per SKU.
 
         stockActual[sku] += diasStockAdd;
         tiempoAcumulado += diasFabPonderado;
     }
-    return { tiempoAcumulado, tiempoTotalCambio, ventaPerdidaTotal };
+    return { tiempoAcumulado, tiempoTotalCambio, ventaPerdidaTotal, tiemposCambio };
 }
 
 function evaluar(secuencia: any[], params: WorkParams): Individual {
-    const { matrizCambioMedida, ventaDiaria, diasStock, diasFabricacion, pesoVenta, idCambios, costoToneladaPerdida, costoHoraCambio, horasDia } = params;
+    const { matrizCambioMedida, ventaDiaria, diasStock, diasFabricacion, pesoVenta, idCambios, costoToneladaPerdida, costoHoraCambio } = params;
 
-    // Performance improvement: pass params directly or structured
     const costos = calcularValores(secuencia, matrizCambioMedida, ventaDiaria, diasStock, diasFabricacion, idCambios);
     const { tiempoTotalCambio, ventaPerdidaTotal } = costos;
 
     const costoVP = ventaPerdidaTotal * costoToneladaPerdida;
-    const costoTC = tiempoTotalCambio * horasDia * costoHoraCambio;
+    const costoTC = tiempoTotalCambio * costoHoraCambio;
+
+    // --- ENHANCEMENT: Continuity Bonus ---
+    // Penalize fragmented production if same SKU appears twice (not supported in current logic but good for future)
+    // Bonus for grouping same "change table ID" (idCambios)
+    let continuityBonus = 0;
+    for (let i = 1; i < secuencia.length; i++) {
+        if (idCambios[secuencia[i].sku] === idCambios[secuencia[i - 1].sku]) {
+            continuityBonus += (costoHoraCambio * 0.1); // Small bonus for staying in same setup
+        }
+    }
 
     // Objective Function: Minimize Cost
-    // We maximize Fitness = 1 / Cost
-    const valorObjetivo = pesoVenta * costoVP + (1 - pesoVenta) * costoTC;
+    const valorObjetivo = Math.max(0, (pesoVenta * costoVP + (1 - pesoVenta) * costoTC) - continuityBonus);
 
     return {
         secuencia,
         costos,
-        aptitud: 1 / (valorObjetivo + 0.0001) // Prevent division by zero
+        costoVP,
+        costoTC,
+        aptitud: 1 / (valorObjetivo + 0.0001)
     };
 }
 
@@ -215,34 +282,37 @@ function mutar(secuencia: any[], tasa: number) {
  * Tries to untangle the sequence by reversing segments or swapping adjacent pairs.
  * Computationally expensive, so only applied to top individuals or periodically.
  */
+/**
+ * 2-Opt Local Search (Segment Reversal)
+ */
 function busquedaLocal(ind: Individual, params: WorkParams): Individual {
-    let mejorSecuencia = [...ind.secuencia];
-    let mejorAptitud = ind.aptitud;
-    let mejorCostos = ind.costos;
+    const n = ind.secuencia.length;
+    if (n < 3) return ind;
+
+    let mejorInd = { ...ind };
     let mejoro = false;
 
-    // Simple adjacent swap (fewer checks than full 2-opt) for speed in JS Worker
-    for (let i = 0; i < mejorSecuencia.length - 1; i++) {
-        // Swap i and i+1
-        [mejorSecuencia[i], mejorSecuencia[i + 1]] = [mejorSecuencia[i + 1], mejorSecuencia[i]];
+    // Try a few random 2-opt moves for performance
+    const maxAttempts = Math.min(20, n);
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const i = Math.floor(Math.random() * (n - 1));
+        const j = Math.floor(Math.random() * (n - i)) + i + 1;
 
-        const candidato = evaluar(mejorSecuencia, params);
-        if (candidato.aptitud > mejorAptitud) {
-            mejorAptitud = candidato.aptitud;
-            mejorCostos = candidato.costos;
+        if (j - i <= 1) continue;
+
+        // Reverse segment [i...j]
+        const nuevaSec = [...mejorInd.secuencia];
+        const sub = nuevaSec.slice(i, j + 1).reverse();
+        nuevaSec.splice(i, sub.length, ...sub);
+
+        const candidato = evaluar(nuevaSec, params);
+        if (candidato.aptitud > mejorInd.aptitud) {
+            mejorInd = candidato;
             mejoro = true;
-            // Greedily accept and continue? Or First Improvement?
-            // Restarting scan from i? Let's keep scanning for now (First Improvement)
-        } else {
-            // Revert
-            [mejorSecuencia[i], mejorSecuencia[i + 1]] = [mejorSecuencia[i + 1], mejorSecuencia[i]];
         }
     }
 
-    if (mejoro) {
-        return { secuencia: mejorSecuencia, aptitud: mejorAptitud, costos: mejorCostos };
-    }
-    return ind;
+    return mejorInd;
 }
 
 function seleccionTorneo(poblacion: Individual[]): Individual {
@@ -267,9 +337,12 @@ onmessage = function (e) {
 
         let poblacion: Individual[] = [];
 
+        // Initialize mode based on weight
+        const scenarioMode = params.pesoVenta > 0.8 ? 'min_lost_sales' : (params.pesoVenta < 0.2 ? 'min_changeovers' : 'balanced');
+
         // Init Population
         for (let i = 0; i < tamanoPoblacion; i++) {
-            const seq = generarSecuenciaDetallada(produccionTn, diasStock);
+            const seq = generarSecuenciaDetallada(produccionTn, diasStock, params.idCambios, params.matrizCambioMedida, scenarioMode);
             poblacion.push(evaluar(seq, params));
         }
 
@@ -288,7 +361,17 @@ onmessage = function (e) {
             }
 
             // Adaptive Mutation: Increase if stuck
-            const currentMutationRate = generationsWithoutImprovement > 20 ? Math.min(0.8, tasaMutacion * 2) : tasaMutacion;
+            let currentMutationRate = generationsWithoutImprovement > 20 ? Math.min(0.8, tasaMutacion * 2) : tasaMutacion;
+
+            // --- ESCAPE LOCAL OPTIMA: Diversification ---
+            if (generationsWithoutImprovement > 40) {
+                // Re-inject 20% random/heuristic individuals
+                for (let k = tamanoPoblacion - 1; k > tamanoPoblacion * 0.8; k--) {
+                    const seq = generarSecuenciaDetallada(produccionTn, diasStock, params.idCambios, params.matrizCambioMedida, scenarioMode);
+                    poblacion[k] = evaluar(seq, params);
+                }
+                generationsWithoutImprovement = 0; // Reset counter after injection
+            }
 
             // Elitism
             const numElite = Math.max(1, Math.floor((tasaElitismo || DEFAULT_ELITISM_RATE) * tamanoPoblacion));
@@ -323,9 +406,9 @@ onmessage = function (e) {
         }
 
         // Final result construction
-        const { tiempoTotalCambio, ventaPerdidaTotal, tiempoAcumulado } = bestGlobal.costos;
+        const { tiempoTotalCambio, ventaPerdidaTotal, tiempoAcumulado, tiemposCambio } = bestGlobal.costos;
         const costoVP = ventaPerdidaTotal * params.costoToneladaPerdida;
-        const costoTC = tiempoTotalCambio * params.horasDia * params.costoHoraCambio;
+        const costoTC = tiempoTotalCambio * params.costoHoraCambio;
 
         self.postMessage({
             type: 'complete',
@@ -337,6 +420,7 @@ onmessage = function (e) {
                 costoVentaPerdida: costoVP,
                 costoTiempoCambio: costoTC,
                 costoTotal: costoVP + costoTC,
+                tiemposCambio: tiemposCambio, // Detailed individual times
                 processingTime: (performance.now() - start) / 1000,
                 params_skus: params.skus,
                 params_desc: params.descripciones,

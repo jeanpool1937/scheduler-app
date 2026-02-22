@@ -8,9 +8,50 @@ import { HolidayConfig } from './HolidayConfig';
 import { ManualStopsConfig } from './ManualStopsConfig';
 import { WorkScheduleConfig } from './WorkScheduleConfig';
 
+// Error Boundary para capturar crashes en componentes hijos
+class ComponentErrorBoundary extends React.Component<
+    { children: React.ReactNode; fallbackLabel: string },
+    { hasError: boolean; error: Error | null }
+> {
+    constructor(props: { children: React.ReactNode; fallbackLabel: string }) {
+        super(props);
+        this.state = { hasError: false, error: null };
+    }
+    static getDerivedStateFromError(error: Error) {
+        return { hasError: true, error };
+    }
+    render() {
+        if (this.state.hasError) {
+            return (
+                <div className="bg-red-50 border border-red-300 rounded-xl p-6">
+                    <h3 className="text-red-700 font-bold mb-2">⚠️ Error en {this.props.fallbackLabel}</h3>
+                    <pre className="text-xs text-red-600 bg-red-100 p-3 rounded overflow-x-auto whitespace-pre-wrap">
+                        {this.state.error?.message}
+                        {'\n\n'}
+                        {this.state.error?.stack}
+                    </pre>
+                </div>
+            );
+        }
+        return this.props.children;
+    }
+}
+
 export const SettingsPanel: React.FC = () => {
     const activeProcessId = useStore((state) => state.activeProcessId);
-    const processData = useStore((state) => state.processes[state.activeProcessId]);
+    const processData = useStore((state) => state.processes[activeProcessId]);
+
+    // Guard clause to prevent crash during state transitions
+    if (!processData) {
+        return (
+            <div className="flex items-center justify-center p-12 text-zinc-500 bg-zinc-50/50 rounded-xl border-2 border-dashed border-zinc-200">
+                <div className="flex flex-col items-center gap-3">
+                    <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                    <p className="text-sm font-medium">Cargando configuración...</p>
+                </div>
+            </div>
+        );
+    }
 
     const {
         stoppageConfigs,
@@ -188,7 +229,9 @@ export const SettingsPanel: React.FC = () => {
                 </div>
 
                 {/* Work Schedule Configuration */}
-                <WorkScheduleConfig />
+                <ComponentErrorBoundary fallbackLabel="Esquema de Trabajo">
+                    <WorkScheduleConfig />
+                </ComponentErrorBoundary>
 
                 {/* Holidays Configuration */}
                 <HolidayConfig />

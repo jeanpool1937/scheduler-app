@@ -215,7 +215,15 @@ export const ArticleMaster: React.FC = () => {
             {/* Header Redesign */}
             <div className="flex flex-col gap-4 mb-4 bg-white p-4 rounded-lg shadow-sm border border-gray-200">
                 <div className="flex justify-between items-center">
-                    <h2 className="text-xl font-bold text-gray-800 tracking-tight">Maestro de Artículos</h2>
+                    <div className="flex flex-col">
+                        <h2 className="text-xl font-bold text-gray-800 tracking-tight">Maestro de Artículos</h2>
+                        <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-[10px] font-black uppercase tracking-widest text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
+                                {activeProcessId.replace('laminador', 'Laminador ')}
+                            </span>
+                            <span className="text-[10px] font-bold text-gray-400 uppercase">Base de datos específica por proceso</span>
+                        </div>
+                    </div>
 
                     <div className="flex items-center gap-2">
                         {/* Global Search */}

@@ -37,7 +37,7 @@ function App() {
           <ProductionScheduler />
         </>
       )}
-      {activeTab === 'sequencer' && <ProductionSequencer />}
+      {activeTab === 'sequencer' && <ProductionSequencer key={activeProcessId} />}
       {activeTab === 'visual' && <VisualSchedule />}
       {activeTab === 'database' && <DatabaseLayout />}
       {activeTab === 'settings' && <SettingsPanel />}

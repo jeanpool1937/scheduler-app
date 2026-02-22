@@ -21,10 +21,29 @@ const getEndTimeLabel = (ds: DaySchedule): string => {
 const formatTime = (h: number, m: number): string =>
     `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 
+const DEFAULT_WORK_SCHEDULE = {
+    is24h: true,
+    days: Object.fromEntries(
+        Array.from({ length: 7 }, (_, i) => [i, { active: true, hours: 24, startHour: 0, startMinute: 0 }])
+    ) as Record<number, DaySchedule>
+};
+
 export const WorkScheduleConfig: React.FC = () => {
     const processData = useStore((state) => state.processes[state.activeProcessId]);
     const setWorkSchedule = useStore((state) => state.setWorkSchedule);
-    const ws = processData.workSchedule;
+
+    // Guard: si workSchedule o su propiedad days no existen, usar valores por defecto
+    const rawWs = processData?.workSchedule;
+    const ws = (rawWs && rawWs.days) ? rawWs : DEFAULT_WORK_SCHEDULE;
+
+    // Inicializar workSchedule en el store si no tiene la estructura completa
+    const initialized = React.useRef(false);
+    React.useEffect(() => {
+        if ((!rawWs || !rawWs.days) && !initialized.current) {
+            initialized.current = true;
+            setWorkSchedule(DEFAULT_WORK_SCHEDULE);
+        }
+    }, [rawWs, setWorkSchedule]);
 
     const handleToggle24h = (enabled: boolean) => {
         if (enabled) {

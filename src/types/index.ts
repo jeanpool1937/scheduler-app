@@ -102,8 +102,16 @@ export interface ProductionScheduleItem {
 
 // ... imports
 
+export interface OptimizationScenario {
+  id: 'balanced' | 'min_lost_sales' | 'min_changeovers';
+  label: string;
+  result: any | null;
+  status: 'idle' | 'calculating' | 'completed' | 'error';
+  progress: number;
+}
+
 export interface SequencerConfig {
-  draftItems: any[]; // Using any[] for flexibility, or define DraftItem here
+  draftItems: any[];
   params: {
     poblacion: number;
     generaciones: number;
@@ -113,7 +121,9 @@ export interface SequencerConfig {
     tasaMutacion: number;
     tasaElitismo: number;
   };
-  lastResult: any;
+  lastResult: any; // Keep for backward compatibility if needed
+  scenarios?: Record<string, OptimizationScenario>;
+  activeScenarioId?: string;
 }
 
 export interface ProcessData {

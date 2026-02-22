@@ -32,7 +32,20 @@ interface DailySchedule {
 
 export const VisualSchedule: React.FC = () => {
     const activeProcessId = useStore((state) => state.activeProcessId);
-    const processData = useStore((state) => state.processes[state.activeProcessId]);
+    const processData = useStore((state) => state.processes[activeProcessId]);
+
+    // Guard clause to prevent crash during state transitions
+    if (!processData) {
+        return (
+            <div className="flex items-center justify-center min-h-[400px] text-zinc-500 bg-zinc-50/50 rounded-xl border-2 border-dashed border-zinc-200">
+                <div className="flex flex-col items-center gap-3">
+                    <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                    <p className="text-sm font-medium">Cargando secuencia diaria...</p>
+                </div>
+            </div>
+        );
+    }
+
     const { schedule, visualTargetDate } = processData;
     const { isHoliday, setVisualTargetDate } = useStore();
 
@@ -318,7 +331,7 @@ export const VisualSchedule: React.FC = () => {
             <header className="mb-4 border-b-2 border-black pb-2 flex justify-between items-end bg-white block">
                 <div className="flex gap-8 items-end">
                     <div>
-                        <h1 className="text-2xl font-black uppercase leading-none">Programación Mensual</h1>
+                        <h1 className="text-2xl font-black uppercase leading-none">Secuencia Diaria</h1>
                         <p className="text-sm font-black text-blue-900 mt-1">
                             Total: {monthlyTotals.tonnage.toLocaleString('en-US', { maximumFractionDigits: 0 })} Ton |
                             Prod: {(monthlyTotals.productionMinutes / 60).toFixed(1)}h |
