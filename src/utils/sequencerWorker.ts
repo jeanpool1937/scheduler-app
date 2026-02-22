@@ -290,7 +290,6 @@ function busquedaLocal(ind: Individual, params: WorkParams): Individual {
     if (n < 3) return ind;
 
     let mejorInd = { ...ind };
-    let mejoro = false;
 
     // Try a few random 2-opt moves for performance
     const maxAttempts = Math.min(20, n);
