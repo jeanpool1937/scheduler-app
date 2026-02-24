@@ -305,9 +305,11 @@ function cruzarOX(p1: any[], p2: any[]): any[] {
     const end = Math.floor(Math.random() * (n - start)) + start;
 
     const hijo: any[] = new Array(n).fill(null);
+    hijo[0] = p1[0];
 
     // Copy sub-segment from P1
     const enHijo = new Set<number>(); // Track indices already placed (by sku value)
+    enHijo.add(p1[0].sku);
     for (let i = start; i <= end; i++) {
         hijo[i] = p1[i];
         enHijo.add(p1[i].sku);
@@ -316,6 +318,7 @@ function cruzarOX(p1: any[], p2: any[]): any[] {
     // Fill remaining slots from P2 in order, skipping already-placed sku indices
     let currentP2 = 0;
     for (let i = 0; i < n; i++) {
+        if (i === 0) continue; // Respetar el anclaje inicial
         if (i >= start && i <= end) continue; // Skip filled segment
 
         // Find next P2 item whose sku index is not already in the hijo
@@ -452,114 +455,104 @@ function seleccionTorneo(poblacion: Individual[]): Individual {
     return mejor;
 }
 
-// --- WORKER HANDLER ---
+// --- CONFIGURATION ---
+const NUM_EPOCHS = 5;
 
 onmessage = function (e) {
     const { type, params } = e.data as { type: string, params: WorkParams };
 
     if (type === 'run') {
         const start = performance.now();
-        const { tamanoPoblacion, tasaMutacion, tasaElitismo } = params;
-        const MAX_TIME_MS = 28000; // 28 seconds absolute limit
-        let lastReportTime = 0;
+        const { tamanoPoblacion, numGeneraciones = 250, tasaMutacion, tasaElitismo } = params;
 
         const scenarioMode = params.pesoVenta > 0.8 ? 'min_lost_sales' : (params.pesoVenta < 0.2 ? 'min_changeovers' : 'balanced');
 
-        // 1. Initial Population Seeded with SOTA Heuristics
-        let poblacion = generarPoblacionInicial(params, scenarioMode, tamanoPoblacion);
+        let absoluteBestGlobal: Individual | null = null;
 
-        // 2. Immediately apply Full 2-Opt strictly to the best deterministic seeds
-        // This guarantees our baseline is an extremely strong local optimum
-        poblacion[0] = full2OptFirstImprovement(poblacion[0], params);
-        poblacion[1] = full2OptFirstImprovement(poblacion[1], params);
-        poblacion[2] = full2OptFirstImprovement(poblacion[2], params);
+        for (let epoch = 1; epoch <= NUM_EPOCHS; epoch++) {
+            // Seed Population
+            let poblacion = generarPoblacionInicial(params, scenarioMode, tamanoPoblacion);
 
-        let bestGlobal = poblacion[0];
-        for (const ind of poblacion) {
-            if (ind.aptitud > bestGlobal.aptitud) bestGlobal = ind;
-        }
+            // Refine top seed strictly to establish strong baseline
+            poblacion[0] = full2OptFirstImprovement(poblacion[0], params);
 
-        let generationsWithoutImprovement = 0;
-        let gen = 0;
+            let bestGlobal = poblacion[0];
+            let generationsWithoutImprovement = 0;
 
-        // 3. Main Time-Bounded Loop (Hybrid ILS/Memetic)
-        while (performance.now() - start < MAX_TIME_MS) {
-            gen++;
-            poblacion.sort((a, b) => b.aptitud - a.aptitud);
+            for (let gen = 0; gen < numGeneraciones; gen++) {
+                poblacion.sort((a, b) => b.aptitud - a.aptitud);
 
-            if (poblacion[0].aptitud > bestGlobal.aptitud) {
-                bestGlobal = poblacion[0];
-                generationsWithoutImprovement = 0;
-            } else {
-                generationsWithoutImprovement++;
-            }
-
-            let currentMutationRate = generationsWithoutImprovement > 20 ? Math.min(0.8, tasaMutacion * 2.5) : tasaMutacion;
-
-            // ILS Perturbation / Escape Local Optima
-            if (generationsWithoutImprovement > 30) {
-                // If stuck, apply heavy perturbation to the elite and replace the bottom half
-                for (let k = tamanoPoblacion - 1; k > tamanoPoblacion * 0.5; k--) {
-                    // Double-bridge or heavy random shuffle to bestGlobal
-                    let seq = mutar([...bestGlobal.secuencia], 1.0);
-                    seq = mutar(seq, 1.0);
-                    poblacion[k] = evaluar(seq, params);
-                }
-
-                // Also apply Full 2-Opt to the best again just in case
-                poblacion[0] = full2OptFirstImprovement(poblacion[0], params);
                 if (poblacion[0].aptitud > bestGlobal.aptitud) {
                     bestGlobal = poblacion[0];
+                    generationsWithoutImprovement = 0;
+                } else {
+                    generationsWithoutImprovement++;
                 }
 
-                generationsWithoutImprovement = 0;
-            }
+                let currentMutationRate = generationsWithoutImprovement > 20 ? Math.min(0.8, tasaMutacion * 2.5) : tasaMutacion;
 
-            const numElite = Math.max(1, Math.floor((tasaElitismo || DEFAULT_ELITISM_RATE) * tamanoPoblacion));
-            const nuevaPob: Individual[] = poblacion.slice(0, numElite);
+                // Escape Local Optima Diversification
+                if (generationsWithoutImprovement > 30) {
+                    for (let k = tamanoPoblacion - 1; k > tamanoPoblacion * 0.5; k--) {
+                        let seq = mutar([...bestGlobal.secuencia], 1.0);
+                        seq = mutar(seq, 1.0);
+                        poblacion[k] = evaluar(seq, params);
+                    }
+                    poblacion[0] = full2OptFirstImprovement(poblacion[0], params);
+                    if (poblacion[0].aptitud > bestGlobal.aptitud) {
+                        bestGlobal = poblacion[0];
+                    }
+                    generationsWithoutImprovement = 0;
+                }
 
-            // Memetic Step: Local Search
-            if (gen % LOCAL_SEARCH_FREQUENCY === 0) {
-                const eliteToRefine = Math.floor(nuevaPob.length * LOCAL_SEARCH_INTENSITY) || 1;
-                for (let k = 0; k < eliteToRefine; k++) {
-                    // Use fast local search for iterations, save Full 2-Opt for perturbations
-                    nuevaPob[k] = busquedaLocal(nuevaPob[k], params);
+                const numElite = Math.max(1, Math.floor((tasaElitismo || DEFAULT_ELITISM_RATE) * tamanoPoblacion));
+                const nuevaPob: Individual[] = poblacion.slice(0, numElite);
+
+                if (gen % LOCAL_SEARCH_FREQUENCY === 0) {
+                    const eliteToRefine = Math.floor(nuevaPob.length * LOCAL_SEARCH_INTENSITY) || 1;
+                    for (let k = 0; k < eliteToRefine; k++) {
+                        nuevaPob[k] = busquedaLocal(nuevaPob[k], params);
+                    }
+                }
+
+                while (nuevaPob.length < tamanoPoblacion) {
+                    const p1 = seleccionTorneo(poblacion);
+                    const p2 = seleccionTorneo(poblacion);
+
+                    let hijoSeq = cruzarOX(p1.secuencia, p2.secuencia);
+                    hijoSeq = mutar(hijoSeq, currentMutationRate);
+
+                    nuevaPob.push(evaluar(hijoSeq, params));
+                }
+
+                poblacion = nuevaPob;
+
+                // Report sub-progress
+                if (gen % 10 === 0) {
+                    const progress = Math.round(((epoch - 1) / NUM_EPOCHS * 100) + ((gen / numGeneraciones) * (100 / NUM_EPOCHS)));
+                    let currentBestCost = absoluteBestGlobal ? Math.min(absoluteBestGlobal.costos.tiempoTotalCambio, bestGlobal.costos.tiempoTotalCambio) : bestGlobal.costos.tiempoTotalCambio;
+                    self.postMessage({ type: 'progress', progress, currentBest: currentBestCost });
                 }
             }
 
-            // Breeding
-            while (nuevaPob.length < tamanoPoblacion) {
-                const p1 = seleccionTorneo(poblacion);
-                const p2 = seleccionTorneo(poblacion);
+            // End of Epoch, apply final sweep and check if it's the absolute best
+            bestGlobal = full2OptFirstImprovement(bestGlobal, params);
 
-                let hijoSeq = cruzarOX(p1.secuencia, p2.secuencia);
-                hijoSeq = mutar(hijoSeq, currentMutationRate);
-
-                nuevaPob.push(evaluar(hijoSeq, params));
-            }
-
-            poblacion = nuevaPob;
-
-            // Report Progress
-            const elapsed = performance.now() - start;
-            if (elapsed - lastReportTime > 500) {
-                const progress = Math.min(99, Math.round((elapsed / MAX_TIME_MS) * 100));
-                self.postMessage({ type: 'progress', progress, currentBest: bestGlobal.costos.tiempoTotalCambio });
-                lastReportTime = elapsed;
+            if (!absoluteBestGlobal || bestGlobal.aptitud > absoluteBestGlobal.aptitud) {
+                absoluteBestGlobal = bestGlobal;
             }
         }
 
-        // Final Full 2-Opt sweep on the best found before finishing
-        bestGlobal = full2OptFirstImprovement(bestGlobal, params);
+        if (!absoluteBestGlobal) return;
 
-        const { tiempoTotalCambio, ventaPerdidaTotal, tiempoAcumulado, tiemposCambio } = bestGlobal.costos;
+        const { tiempoTotalCambio, ventaPerdidaTotal, tiempoAcumulado, tiemposCambio } = absoluteBestGlobal.costos;
         const costoVP = ventaPerdidaTotal * params.costoToneladaPerdida;
         const costoTC = tiempoTotalCambio * params.costoHoraCambio;
 
         self.postMessage({
             type: 'complete',
             result: {
-                secuencia: bestGlobal.secuencia,
+                secuencia: absoluteBestGlobal.secuencia,
                 tiempoTotalCambio,
                 ventaPerdidaTotal,
                 tiempoProduccionTotal: tiempoAcumulado - tiempoTotalCambio,
