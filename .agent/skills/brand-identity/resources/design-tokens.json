@@ -1,0 +1,43 @@
+{
+    "meta": {
+        "brand_name": "Aceros Arequipa",
+        "description": "Tokens de diseño principales para la implementación de UI con estética industrial y sólida."
+    },
+    "colors": {
+        "primary": {
+            "DEFAULT": "#DA291C",
+            "hover": "#B01F16",
+            "foreground": "#FFFFFF"
+        },
+        "secondary": {
+            "DEFAULT": "#1F2937",
+            "foreground": "#FFFFFF"
+        },
+        "background": "#FFFFFF",
+        "foreground": "#111827",
+        "muted": "#F3F4F6",
+        "accent": "#F9FAFB",
+        "destructive": "#991B1B",
+        "success": "#16A34A"
+    },
+    "typography": {
+        "font_family_headings": [
+            "Roboto",
+            "Helvetica Neue",
+            "sans-serif"
+        ],
+        "font_family_body": [
+            "Open Sans",
+            "system-ui",
+            "sans-serif"
+        ],
+        "font_weight_bold": "700",
+        "font_weight_normal": "400"
+    },
+    "ui": {
+        "border_radius_default": "0.125rem",
+        "border_radius_small": "0px",
+        "spacing_base_unit": "4px",
+        "shadow_style": "sharp"
+    }
+}
