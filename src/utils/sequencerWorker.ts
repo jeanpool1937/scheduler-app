@@ -53,8 +53,10 @@ interface Individual {
  * Heuristic 1: Earliest Due Date (EDD) - Priority for Min Lost Sales
  */
 function generarSecuenciaEDD(produccionTn: number[], diasStock: number[]) {
-    const sorted = diasStock.map((dias, idx) => ({ producto: idx, dias })).sort((a, b) => a.dias - b.dias);
-    return sorted.map(({ producto }) => ({ sku: producto, sublote: 1, tamano: produccionTn[producto] }));
+    if (produccionTn.length === 0) return [];
+    const fixedItem = { sku: 0, sublote: 1, tamano: produccionTn[0] };
+    const rest = diasStock.map((dias, idx) => ({ producto: idx, dias })).filter(x => x.producto !== 0).sort((a, b) => a.dias - b.dias);
+    return [fixedItem, ...rest.map(({ producto }) => ({ sku: producto, sublote: 1, tamano: produccionTn[producto] }))];
 }
 
 /**
@@ -62,9 +64,9 @@ function generarSecuenciaEDD(produccionTn: number[], diasStock: number[]) {
  */
 function generarSecuenciaNearestNeighbor(produccionTn: number[], idCambios: number[], matriz: number[][]) {
     const n = produccionTn.length;
-    const items = Array.from({ length: n }, (_, i) => i);
+    if (n === 0) return [];
     const secuencia: any[] = [];
-    let current = items[Math.floor(Math.random() * n)];
+    let current = 0;
     secuencia.push({ sku: current, sublote: 1, tamano: produccionTn[current] });
     const visitados = new Set([current]);
 
@@ -72,11 +74,11 @@ function generarSecuenciaNearestNeighbor(produccionTn: number[], idCambios: numb
         let bestNext = -1;
         let minTC = Infinity;
 
-        for (let i = 0; i < n; i++) {
+        for (let i = 1; i < n; i++) {
             if (visitados.has(i)) continue;
             const fromIdx = idCambios[current];
             const toIdx = idCambios[i];
-            const tc = (fromIdx !== -1 && toIdx !== -1) ? (matriz[fromIdx]?.[toIdx] || 0) : 0;
+            const tc = (fromIdx !== undefined && fromIdx !== -1 && toIdx !== undefined && toIdx !== -1 && matriz[fromIdx]?.[toIdx] !== undefined) ? matriz[fromIdx][toIdx] : 0;
 
             if (tc < minTC) {
                 minTC = tc;
@@ -92,33 +94,129 @@ function generarSecuenciaNearestNeighbor(produccionTn: number[], idCambios: numb
             visitados.add(current);
         } else break;
     }
-    return secuencia;
-}
 
-function generarSecuenciaDetallada(produccionTn: number[], diasStock: number[], idCambios: number[], matriz: number[][], mode: 'balanced' | 'min_lost_sales' | 'min_changeovers') {
-    let secuencia: any[] = [];
-
-    if (mode === 'min_lost_sales') {
-        secuencia = generarSecuenciaEDD(produccionTn, diasStock);
-    } else if (mode === 'min_changeovers') {
-        secuencia = generarSecuenciaNearestNeighbor(produccionTn, idCambios, matriz);
-    } else {
-        // Balanced: Mix 
-        secuencia = Math.random() > 0.5
-            ? generarSecuenciaEDD(produccionTn, diasStock)
-            : generarSecuenciaNearestNeighbor(produccionTn, idCambios, matriz);
-    }
-
-    // Add noise for GA diversity (Shuffle 20% of items)
-    if (Math.random() > 0.1) {
-        const swapCount = Math.floor(secuencia.length * 0.2);
-        for (let i = 0; i < swapCount; i++) {
-            const a = Math.floor(Math.random() * secuencia.length);
-            const b = Math.floor(Math.random() * secuencia.length);
-            [secuencia[a], secuencia[b]] = [secuencia[b], secuencia[a]];
+    // Safety fallback
+    for (let i = 1; i < n; i++) {
+        if (!visitados.has(i)) {
+            secuencia.push({ sku: i, sublote: 1, tamano: produccionTn[i] });
+            visitados.add(i);
         }
     }
     return secuencia;
+}
+
+function generarSecuenciaATCS(produccionTn: number[], diasStock: number[], diasFabricacion: number[], idCambios: number[], matriz: number[][]) {
+    const n = produccionTn.length;
+    if (n === 0) return [];
+
+    // Calculate averages for scaling
+    let avgP = 0;
+    let avgS = 0;
+    let sCount = 0;
+    for (let i = 1; i < n; i++) avgP += diasFabricacion[i];
+    avgP /= (n - 1 || 1);
+
+    for (let i = 0; i < matriz.length; i++) {
+        for (let j = 0; j < matriz[i].length; j++) {
+            if (matriz[i][j] > 0) { avgS += matriz[i][j]; sCount++; }
+        }
+    }
+    avgS /= (sCount || 1);
+
+    const secuencia: any[] = [];
+    let current = 0; // always start at 0
+    secuencia.push({ sku: current, sublote: 1, tamano: produccionTn[current] });
+    const visitados = new Set([current]);
+    let currentTime = 0;
+
+    const K1 = 1.5; // Tuning parameter for due date (Slack)
+    const K2 = 0.5; // Tuning parameter for setup time
+
+    while (visitados.size < n) {
+        let bestNext = -1;
+        let bestScore = -Infinity;
+
+        for (let j = 1; j < n; j++) {
+            if (visitados.has(j)) continue;
+
+            const pj = diasFabricacion[j];
+            const dj = diasStock[j];
+
+            const fromIdx = idCambios[current];
+            const toIdx = idCambios[j];
+            const s_ij = (fromIdx !== undefined && fromIdx !== -1 && toIdx !== undefined && toIdx !== -1 && matriz[fromIdx]?.[toIdx] !== undefined) ? (matriz[fromIdx][toIdx] / 24) : 0;
+
+            const slack = Math.max(dj - pj - currentTime, 0);
+
+            // ATCS Index formula
+            const term1 = Math.exp(-slack / (K1 * avgP));
+            const term2 = Math.exp(-s_ij / (K2 * avgS));
+
+            const score = (1 / (pj || 1)) * term1 * term2;
+
+            if (score > bestScore) {
+                bestScore = score;
+                bestNext = j;
+            } else if (score === bestScore && Math.random() > 0.5) {
+                bestNext = j;
+            }
+        }
+
+        if (bestNext !== -1) {
+            current = bestNext;
+            secuencia.push({ sku: current, sublote: 1, tamano: produccionTn[current] });
+            visitados.add(current);
+            const fromIdx = idCambios[secuencia[secuencia.length - 2].sku];
+            const toIdx = idCambios[current];
+            const s_ij = (fromIdx !== undefined && fromIdx !== -1 && toIdx !== undefined && toIdx !== -1 && matriz[fromIdx]?.[toIdx] !== undefined) ? (matriz[fromIdx][toIdx] / 24) : 0;
+            currentTime += diasFabricacion[current] + s_ij;
+        } else break;
+    }
+
+    // fallback
+    for (let i = 1; i < n; i++) {
+        if (!visitados.has(i)) {
+            secuencia.push({ sku: i, sublote: 1, tamano: produccionTn[i] });
+            visitados.add(i);
+        }
+    }
+    return secuencia;
+}
+
+function generarPoblacionInicial(params: WorkParams, mode: 'balanced' | 'min_lost_sales' | 'min_changeovers', size: number) {
+    const { produccionTn, diasStock, diasFabricacion, idCambios, matrizCambioMedida } = params;
+    const poblacion: Individual[] = [];
+
+    // Always inject the best deterministic heuristics
+    const edd = evaluar(generarSecuenciaEDD(produccionTn, diasStock), params);
+    const nn = evaluar(generarSecuenciaNearestNeighbor(produccionTn, idCambios, matrizCambioMedida), params);
+    const atcs = evaluar(generarSecuenciaATCS(produccionTn, diasStock, diasFabricacion, idCambios, matrizCambioMedida), params);
+
+    poblacion.push(edd, nn, atcs);
+
+    // Fill the rest with mutated versions of the heuristics (ILS Perturbation style)
+    while (poblacion.length < size) {
+        let baseSeq = [];
+        const rand = Math.random();
+        // Give preference based on mode
+        if (mode === 'min_lost_sales') {
+            baseSeq = [...(rand > 0.3 ? atcs : edd).secuencia];
+        } else if (mode === 'min_changeovers') {
+            baseSeq = [...nn.secuencia];
+        } else {
+            baseSeq = [...(rand > 0.6 ? atcs : (rand > 0.3 ? nn : edd)).secuencia];
+        }
+
+        // Shuffle 20-50% for diversity
+        const swapCount = Math.floor((baseSeq.length - 1) * (0.2 + Math.random() * 0.3));
+        for (let i = 0; i < swapCount; i++) {
+            const a = Math.floor(Math.random() * (baseSeq.length - 1)) + 1;
+            const b = Math.floor(Math.random() * (baseSeq.length - 1)) + 1;
+            [baseSeq[a], baseSeq[b]] = [baseSeq[b], baseSeq[a]];
+        }
+        poblacion.push(evaluar(baseSeq, params));
+    }
+    return poblacion;
 }
 
 function calcularValores(secuencia: any[], matriz: number[][], ventaDiaria: number[], diasStock: number[], diasFabricacion: number[], idCambios: number[]) {
@@ -200,49 +298,48 @@ function evaluar(secuencia: any[], params: WorkParams): Individual {
  */
 function cruzarOX(p1: any[], p2: any[]): any[] {
     const n = p1.length;
-    const start = Math.floor(Math.random() * (n - 1));
+    if (n <= 1) return [...p1];
+
+    // start must be >= 1 because index 0 is always fixed.
+    const start = Math.floor(Math.random() * (n - 1)) + 1;
     const end = Math.floor(Math.random() * (n - start)) + start;
 
-    const hijo = new Array(n).fill(null);
-    // Wait, items might have same SKU if split lots?
-    // Assuming distinct objects or simple indices. Current implementation uses objects.
-    // We should use object reference or a unique ID. 
-    // For simplicity given current data structure, let's assume index-based or unique items.
-    // The previous implementation assumed {sku, sublote, tamano}.
-    // If distinct items, we use reference equality.
+    const hijo: any[] = new Array(n).fill(null);
 
     // Copy sub-segment from P1
+    const enHijo = new Set<number>(); // Track indices already placed (by sku value)
     for (let i = start; i <= end; i++) {
         hijo[i] = p1[i];
+        enHijo.add(p1[i].sku);
     }
 
-    // Fill remaining from P2 in order
+    // Fill remaining slots from P2 in order, skipping already-placed sku indices
     let currentP2 = 0;
     for (let i = 0; i < n; i++) {
-        if (i >= start && i <= end) continue; // Skip filled slots
+        if (i >= start && i <= end) continue; // Skip filled segment
 
-        // Find next item in P2 that isn't already in hijo (from P1 segment)
-        // Note: O(N^2) here in bad implementation. Optimization: fast lookup set.
-        // Since we might have duplicates of SKUs (if split lots), we need to be careful.
-        // If we treat the initial array as a permutation of indices 0..N-1, it's safer.
-        // The original code passed full objects.
-        // Let's rely on filter approach for now.
-
-        while (currentP2 < n) {
-            const candidate = p2[currentP2];
-            // Check if candidate is already in sub-segment of P1
-            // Issue: Direct object comparison works if referencing same objects in memory
-            let exists = false;
-            for (let k = start; k <= end; k++) {
-                if (hijo[k] === candidate) { exists = true; break; }
-            }
-
-            if (!exists) {
-                hijo[i] = candidate;
-                currentP2++;
-                break;
-            }
+        // Find next P2 item whose sku index is not already in the hijo
+        while (currentP2 < n && enHijo.has(p2[currentP2].sku)) {
             currentP2++;
+        }
+
+        if (currentP2 < n) {
+            hijo[i] = p2[currentP2];
+            enHijo.add(p2[currentP2].sku);
+            currentP2++;
+        }
+    }
+
+    // Safety: fill any remaining null slots with items not yet placed
+    // (should not happen if P1 and P2 are valid permutations, but guards against edge cases)
+    const allSkus = new Set(p1.map((it: any) => it.sku));
+    const missing = [...allSkus].filter(s => !enHijo.has(s));
+    let mIdx = 0;
+    for (let i = 0; i < n; i++) {
+        if (hijo[i] === null && mIdx < missing.length) {
+            // Find original item object from p1 with this sku
+            hijo[i] = p1.find((it: any) => it.sku === missing[mIdx]) || p2.find((it: any) => it.sku === missing[mIdx]);
+            mIdx++;
         }
     }
 
@@ -253,21 +350,20 @@ function mutar(secuencia: any[], tasa: number) {
     if (Math.random() > tasa) return secuencia;
 
     const n = secuencia.length;
-    if (n < 2) return secuencia;
+    if (n <= 2) return secuencia; // Si N<=2 solo 1 item (o 0) es movible, no hay mutacion posible al ser ox1 fijo.
 
     const tipo = Math.random();
 
     if (tipo < 0.5) {
-        // Swap Mutation
-        const i = Math.floor(Math.random() * n);
-        let j = Math.floor(Math.random() * n);
-        while (i === j) j = Math.floor(Math.random() * n);
+        // Swap Mutation (Never move index 0)
+        const i = Math.floor(Math.random() * (n - 1)) + 1;
+        let j = Math.floor(Math.random() * (n - 1)) + 1;
+        while (i === j) j = Math.floor(Math.random() * (n - 1)) + 1;
         [secuencia[i], secuencia[j]] = [secuencia[j], secuencia[i]];
     } else {
-        // Insertion Mutation (Shift)
-        // Take item at i and move to j
-        const i = Math.floor(Math.random() * n);
-        let j = Math.floor(Math.random() * n);
+        // Insertion Mutation (Shift) (Never move or insert at index 0)
+        const i = Math.floor(Math.random() * (n - 1)) + 1;
+        let j = Math.floor(Math.random() * (n - 1)) + 1;
         const [item] = secuencia.splice(i, 1);
         secuencia.splice(j, 0, item);
     }
@@ -283,23 +379,56 @@ function mutar(secuencia: any[], tasa: number) {
  * Computationally expensive, so only applied to top individuals or periodically.
  */
 /**
- * 2-Opt Local Search (Segment Reversal)
+ * Full 2-Opt Local Search (Steepest Descent / First Improvement)
+ * Searches the entire neighborhood and returns the first strictly better sequence.
  */
-function busquedaLocal(ind: Individual, params: WorkParams): Individual {
+function full2OptFirstImprovement(ind: Individual, params: WorkParams): Individual {
     const n = ind.secuencia.length;
-    if (n < 3) return ind;
+    if (n <= 3) return ind;
 
-    let mejorInd = { ...ind };
+    let currentBest = ind;
+    let improved = true;
+    let maxIter = 50; // Prevent infinite loops in edge cases
 
-    // Try a few random 2-opt moves for performance
-    const maxAttempts = Math.min(20, n);
+    while (improved && maxIter > 0) {
+        improved = false;
+        maxIter--;
+
+        // i must be >= 1 because index 0 is fixed.
+        for (let i = 1; i < n - 1; i++) {
+            for (let k = i + 1; k < n; k++) {
+                if (k - i <= 1 && k < n - 1) continue; // Skip adjacent swaps if not needed, but keep it simple
+
+                const nuevaSec = [...currentBest.secuencia];
+                const sub = nuevaSec.slice(i, k + 1).reverse();
+                nuevaSec.splice(i, sub.length, ...sub);
+
+                const candidato = evaluar(nuevaSec, params);
+                if (candidato.aptitud > currentBest.aptitud) {
+                    currentBest = candidato;
+                    improved = true;
+                    break; // First improvement: break inner loop
+                }
+            }
+            if (improved) break; // First improvement: break outer loop and restart
+        }
+    }
+    return currentBest;
+}
+
+function busquedaLocal(ind: Individual, params: WorkParams): Individual {
+    // For general Memetic GA, use the fast randomized version
+    const n = ind.secuencia.length;
+    if (n <= 3) return ind;
+
+    let mejorInd = ind;
+    const maxAttempts = Math.min(30, n * 2);
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        const i = Math.floor(Math.random() * (n - 1));
-        const j = Math.floor(Math.random() * (n - i)) + i + 1;
+        const i = Math.floor(Math.random() * (n - 2)) + 1;
+        const j = Math.floor(Math.random() * (n - 1 - i)) + i + 1;
 
         if (j - i <= 1) continue;
 
-        // Reverse segment [i...j]
         const nuevaSec = [...mejorInd.secuencia];
         const sub = nuevaSec.slice(i, j + 1).reverse();
         nuevaSec.splice(i, sub.length, ...sub);
@@ -309,7 +438,6 @@ function busquedaLocal(ind: Individual, params: WorkParams): Individual {
             mejorInd = candidato;
         }
     }
-
     return mejorInd;
 }
 
@@ -331,24 +459,32 @@ onmessage = function (e) {
 
     if (type === 'run') {
         const start = performance.now();
-        const { tamanoPoblacion, numGeneraciones, tasaMutacion, tasaElitismo, produccionTn, diasStock } = params;
+        const { tamanoPoblacion, tasaMutacion, tasaElitismo } = params;
+        const MAX_TIME_MS = 28000; // 28 seconds absolute limit
+        let lastReportTime = 0;
 
-        let poblacion: Individual[] = [];
-
-        // Initialize mode based on weight
         const scenarioMode = params.pesoVenta > 0.8 ? 'min_lost_sales' : (params.pesoVenta < 0.2 ? 'min_changeovers' : 'balanced');
 
-        // Init Population
-        for (let i = 0; i < tamanoPoblacion; i++) {
-            const seq = generarSecuenciaDetallada(produccionTn, diasStock, params.idCambios, params.matrizCambioMedida, scenarioMode);
-            poblacion.push(evaluar(seq, params));
-        }
+        // 1. Initial Population Seeded with SOTA Heuristics
+        let poblacion = generarPoblacionInicial(params, scenarioMode, tamanoPoblacion);
+
+        // 2. Immediately apply Full 2-Opt strictly to the best deterministic seeds
+        // This guarantees our baseline is an extremely strong local optimum
+        poblacion[0] = full2OptFirstImprovement(poblacion[0], params);
+        poblacion[1] = full2OptFirstImprovement(poblacion[1], params);
+        poblacion[2] = full2OptFirstImprovement(poblacion[2], params);
 
         let bestGlobal = poblacion[0];
-        let generationsWithoutImprovement = 0;
+        for (const ind of poblacion) {
+            if (ind.aptitud > bestGlobal.aptitud) bestGlobal = ind;
+        }
 
-        for (let gen = 0; gen < numGeneraciones; gen++) {
-            // Sort by fitness desc
+        let generationsWithoutImprovement = 0;
+        let gen = 0;
+
+        // 3. Main Time-Bounded Loop (Hybrid ILS/Memetic)
+        while (performance.now() - start < MAX_TIME_MS) {
+            gen++;
             poblacion.sort((a, b) => b.aptitud - a.aptitud);
 
             if (poblacion[0].aptitud > bestGlobal.aptitud) {
@@ -358,31 +494,37 @@ onmessage = function (e) {
                 generationsWithoutImprovement++;
             }
 
-            // Adaptive Mutation: Increase if stuck
-            let currentMutationRate = generationsWithoutImprovement > 20 ? Math.min(0.8, tasaMutacion * 2) : tasaMutacion;
+            let currentMutationRate = generationsWithoutImprovement > 20 ? Math.min(0.8, tasaMutacion * 2.5) : tasaMutacion;
 
-            // --- ESCAPE LOCAL OPTIMA: Diversification ---
-            if (generationsWithoutImprovement > 40) {
-                // Re-inject 20% random/heuristic individuals
-                for (let k = tamanoPoblacion - 1; k > tamanoPoblacion * 0.8; k--) {
-                    const seq = generarSecuenciaDetallada(produccionTn, diasStock, params.idCambios, params.matrizCambioMedida, scenarioMode);
+            // ILS Perturbation / Escape Local Optima
+            if (generationsWithoutImprovement > 30) {
+                // If stuck, apply heavy perturbation to the elite and replace the bottom half
+                for (let k = tamanoPoblacion - 1; k > tamanoPoblacion * 0.5; k--) {
+                    // Double-bridge or heavy random shuffle to bestGlobal
+                    let seq = mutar([...bestGlobal.secuencia], 1.0);
+                    seq = mutar(seq, 1.0);
                     poblacion[k] = evaluar(seq, params);
                 }
-                generationsWithoutImprovement = 0; // Reset counter after injection
+
+                // Also apply Full 2-Opt to the best again just in case
+                poblacion[0] = full2OptFirstImprovement(poblacion[0], params);
+                if (poblacion[0].aptitud > bestGlobal.aptitud) {
+                    bestGlobal = poblacion[0];
+                }
+
+                generationsWithoutImprovement = 0;
             }
 
-            // Elitism
             const numElite = Math.max(1, Math.floor((tasaElitismo || DEFAULT_ELITISM_RATE) * tamanoPoblacion));
             const nuevaPob: Individual[] = poblacion.slice(0, numElite);
 
-            // Memetic Step: Apply Local Search to Elite occasionally
+            // Memetic Step: Local Search
             if (gen % LOCAL_SEARCH_FREQUENCY === 0) {
                 const eliteToRefine = Math.floor(nuevaPob.length * LOCAL_SEARCH_INTENSITY) || 1;
                 for (let k = 0; k < eliteToRefine; k++) {
+                    // Use fast local search for iterations, save Full 2-Opt for perturbations
                     nuevaPob[k] = busquedaLocal(nuevaPob[k], params);
                 }
-                // Re-update best global if LS found something better
-                if (nuevaPob[0].aptitud > bestGlobal.aptitud) bestGlobal = nuevaPob[0];
             }
 
             // Breeding
@@ -398,12 +540,18 @@ onmessage = function (e) {
 
             poblacion = nuevaPob;
 
-            if (gen % 10 === 0 || gen === numGeneraciones - 1) {
-                self.postMessage({ type: 'progress', progress: Math.round(((gen + 1) / numGeneraciones) * 100) });
+            // Report Progress
+            const elapsed = performance.now() - start;
+            if (elapsed - lastReportTime > 500) {
+                const progress = Math.min(99, Math.round((elapsed / MAX_TIME_MS) * 100));
+                self.postMessage({ type: 'progress', progress, currentBest: bestGlobal.costos.tiempoTotalCambio });
+                lastReportTime = elapsed;
             }
         }
 
-        // Final result construction
+        // Final Full 2-Opt sweep on the best found before finishing
+        bestGlobal = full2OptFirstImprovement(bestGlobal, params);
+
         const { tiempoTotalCambio, ventaPerdidaTotal, tiempoAcumulado, tiemposCambio } = bestGlobal.costos;
         const costoVP = ventaPerdidaTotal * params.costoToneladaPerdida;
         const costoTC = tiempoTotalCambio * params.costoHoraCambio;
@@ -418,7 +566,7 @@ onmessage = function (e) {
                 costoVentaPerdida: costoVP,
                 costoTiempoCambio: costoTC,
                 costoTotal: costoVP + costoTC,
-                tiemposCambio: tiemposCambio, // Detailed individual times
+                tiemposCambio: tiemposCambio,
                 processingTime: (performance.now() - start) / 1000,
                 params_skus: params.skus,
                 params_desc: params.descripciones,

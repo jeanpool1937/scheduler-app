@@ -54,7 +54,7 @@ export const ProductionScheduler: React.FC = () => {
         setVisualTargetDate
     } = useStore();
 
-    const articles = useArticleStore((state) => state.getArticles(activeProcessId));
+    const articles = useArticleStore((state) => state.articlesByProcess[activeProcessId] || []);
 
     // Context Menu State
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; rowIndex: number; rowId: string } | null>(null);

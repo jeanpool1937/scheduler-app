@@ -9,6 +9,7 @@ interface ArticleStore {
 
     // Actions
     fetchArticles: (processId: ProcessId) => Promise<void>;
+    fetchAllArticles: () => Promise<void>;
     addArticle: (processId: ProcessId, article: Article) => Promise<void>;
     setArticles: (processId: ProcessId, articles: Article[]) => Promise<void>;
     updateArticle: (processId: ProcessId, id: string, article: Partial<Article>) => Promise<void>;
@@ -72,18 +73,36 @@ export const useArticleStore = create<ArticleStore>((set, get) => ({
 
     fetchArticles: async (processId) => {
         set({ loading: true });
-        const { data, error } = await supabase
-            .from('scheduler_articles')
-            .select('*')
-            .eq('process_id', processId);
+        let allData: any[] = [];
+        let from = 0;
+        const step = 1000;
+        let hasMore = true;
 
-        if (error) {
-            console.error('Error fetching articles:', error);
-            set({ loading: false });
-            return;
+        while (hasMore) {
+            const { data, error } = await supabase
+                .from('scheduler_articles')
+                .select('*')
+                .eq('process_id', processId)
+                .range(from, from + step - 1);
+
+            if (error) {
+                console.error(`Error fetching articles for ${processId}:`, error);
+                set({ loading: false });
+                return;
+            }
+
+            if (data && data.length > 0) {
+                allData = [...allData, ...data];
+                from += step;
+                if (data.length < step) {
+                    hasMore = false;
+                }
+            } else {
+                hasMore = false;
+            }
         }
 
-        const articles = data.map(mapFromDb);
+        const articles = allData.map(mapFromDb);
         set((state) => ({
             articlesByProcess: {
                 ...state.articlesByProcess,
@@ -91,6 +110,34 @@ export const useArticleStore = create<ArticleStore>((set, get) => ({
             },
             loading: false
         }));
+    },
+
+    fetchAllArticles: async () => {
+        set({ loading: true });
+        const { data, error } = await supabase
+            .from('scheduler_articles')
+            .select('*');
+
+        if (error) {
+            console.error('Error fetching all articles:', error);
+            set({ loading: false });
+            return;
+        }
+
+        const grouped: Record<ProcessId, Article[]> = {
+            'laminador1': [],
+            'laminador2': [],
+            'laminador3': [],
+        };
+
+        (data || []).forEach(row => {
+            const pId = row.process_id as ProcessId;
+            if (grouped[pId]) {
+                grouped[pId].push(mapFromDb(row));
+            }
+        });
+
+        set({ articlesByProcess: grouped, loading: false });
     },
 
     addArticle: async (processId, article) => {

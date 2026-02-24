@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import type { AppState, ProcessData, ProductionScheduleItem, StoppageConfig, WorkSchedule, ProcessId } from '../types';
 import type { Article } from '../types/article';
 import { useArticleStore } from './useArticleStore';
@@ -186,628 +187,649 @@ const createInitialProcessData = (processId: string): ProcessData => ({
     }
 });
 
-export const useStore = create<AppState>((set, get) => ({
-    activeProcessId: 'laminador1',
-    processes: {
-        'laminador1': createInitialProcessData('laminador1'),
-        'laminador2': createInitialProcessData('laminador2'),
-        'laminador3': createInitialProcessData('laminador3'),
-    },
-    activeTab: 'scheduler',
+export const useStore = create<AppState>()(
+    persist(
+        (set, get) => ({
+            activeProcessId: 'laminador1',
+            processes: {
+                'laminador1': createInitialProcessData('laminador1'),
+                'laminador2': createInitialProcessData('laminador2'),
+                'laminador3': createInitialProcessData('laminador3'),
+            },
+            activeTab: 'scheduler',
 
-    // Global Actions
-    setActiveProcess: async (id) => {
-        set({ activeProcessId: id });
-        // Trigger fetch for other stores when process changes
-        await Promise.all([
-            useArticleStore.getState().fetchArticles(id),
-            useChangeoverStore.getState().fetchRules(id),
-            (get() as any).fetchProcessData(id)
-        ]);
-    },
-    setActiveTab: (tab) => set({ activeTab: tab }),
+            // Global Actions
+            setActiveProcess: async (id) => {
+                set({ activeProcessId: id });
+                // Trigger fetch for other stores when process changes
+                await Promise.all([
+                    useArticleStore.getState().fetchArticles(id),
+                    useChangeoverStore.getState().fetchRules(id),
+                    (get() as any).fetchProcessData(id)
+                ]);
+            },
+            setActiveTab: (tab) => set({ activeTab: tab }),
 
-    // Fetch Configs and Schedule
-    fetchProcessData: async (processId: ProcessId) => {
-        const [configRes, itemsRes, stopsRes, manualRes] = await Promise.all([
-            supabase.from('scheduler_process_configs').select('*').eq('id', processId).single(),
-            supabase.from('scheduler_production_items').select('*').eq('process_id', processId).order('sequence_order'),
-            supabase.from('scheduler_stoppage_configs').select('*').eq('process_id', processId),
-            supabase.from('scheduler_manual_stops').select('*').eq('process_id', processId)
-        ]);
+            // Fetch Configs and Schedule
+            fetchProcessData: async (processId: ProcessId) => {
+                const [configRes, itemsRes, stopsRes, manualRes] = await Promise.all([
+                    supabase.from('scheduler_process_configs').select('*').eq('id', processId).single(),
+                    supabase.from('scheduler_production_items').select('*').eq('process_id', processId).order('sequence_order'),
+                    supabase.from('scheduler_stoppage_configs').select('*').eq('process_id', processId),
+                    supabase.from('scheduler_manual_stops').select('*').eq('process_id', processId)
+                ]);
 
-        if (configRes.data) {
-            set((state) => ({
-                processes: {
-                    ...state.processes,
-                    [processId]: {
-                        ...state.processes[processId],
-                        programStartDate: new Date(configRes.data.program_start_date),
-                        workSchedule: configRes.data.work_schedule,
-                        holidays: configRes.data.holidays,
-                        columnLabels: configRes.data.column_labels,
-                        visualTargetDate: configRes.data.visual_target_date ? new Date(configRes.data.visual_target_date) : null,
-                        sequencerConfig: configRes.data.sequencer_config || state.processes[processId].sequencerConfig
+                if (configRes.data) {
+                    set((state) => ({
+                        processes: {
+                            ...state.processes,
+                            [processId]: {
+                                ...state.processes[processId],
+                                programStartDate: new Date(configRes.data.program_start_date),
+                                workSchedule: configRes.data.work_schedule,
+                                holidays: configRes.data.holidays,
+                                columnLabels: configRes.data.column_labels,
+                                visualTargetDate: configRes.data.visual_target_date ? new Date(configRes.data.visual_target_date) : null,
+                                sequencerConfig: configRes.data.sequencer_config || state.processes[processId].sequencerConfig
+                            }
+                        }
+                    }));
+                }
+
+                if (itemsRes.data) {
+                    const mappedItems: ProductionScheduleItem[] = itemsRes.data.map(d => ({
+                        id: d.id,
+                        sequenceOrder: d.sequence_order,
+                        skuCode: d.sku_code,
+                        quantity: Number(d.quantity),
+                        stoppages: d.stoppages,
+                        startTime: new Date(), // Will be recalculated
+                        endTime: new Date(),
+                        calculatedPace: 0,
+                        productionTimeMinutes: 0
+                    }));
+
+                    set((state) => ({
+                        processes: {
+                            ...state.processes,
+                            [processId]: {
+                                ...state.processes[processId],
+                                schedule: mappedItems
+                            }
+                        }
+                    }));
+                }
+
+                if (stopsRes.data && stopsRes.data.length > 0) {
+                    set((state) => ({
+                        processes: {
+                            ...state.processes,
+                            [processId]: {
+                                ...state.processes[processId],
+                                stoppageConfigs: stopsRes.data.map(s => ({
+                                    id: s.id,
+                                    colId: s.col_id,
+                                    label: s.label,
+                                    defaultDuration: Number(s.default_duration)
+                                }))
+                            }
+                        }
+                    }));
+                }
+
+                if (manualRes.data) {
+                    set((state) => ({
+                        processes: {
+                            ...state.processes,
+                            [processId]: {
+                                ...state.processes[processId],
+                                manualStops: manualRes.data.map(m => ({
+                                    id: m.id,
+                                    start: new Date(m.start_time),
+                                    durationMinutes: Number(m.duration_minutes),
+                                    label: m.label
+                                }))
+                            }
+                        }
+                    }));
+                }
+
+                get().recalculateSchedule();
+            },
+
+            saveProcessItems: async (processId: ProcessId, items: ProductionScheduleItem[]) => {
+                try {
+                    // Bulk sync production items
+                    const { error: delError } = await supabase.from('scheduler_production_items').delete().eq('process_id', processId);
+                    if (delError) throw delError;
+
+                    if (items.length === 0) return;
+
+                    const toInsert = items.map(it => ({
+                        id: it.id || crypto.randomUUID(),
+                        process_id: processId,
+                        sequence_order: it.sequenceOrder,
+                        sku_code: it.skuCode,
+                        quantity: it.quantity,
+                        stoppages: it.stoppages
+                    }));
+
+                    const { error: insError } = await supabase.from('scheduler_production_items').insert(toInsert);
+                    if (insError) throw insError;
+                } catch (error) {
+                    console.error(`Error persisting items for ${processId}:`, error);
+                    alert(`Error crítico al guardar en Supabase (${processId}). Los cambios se mantienen solo en local.`);
+                }
+            },
+
+            _saveSnapshot: () => {
+                set((state) => {
+                    const pid = state.activeProcessId;
+                    const pData = state.processes[pid];
+                    return {
+                        processes: {
+                            ...state.processes,
+                            [pid]: {
+                                ...pData,
+                                scheduleHistory: [JSON.parse(JSON.stringify(pData.schedule)), ...pData.scheduleHistory].slice(0, MAX_HISTORY)
+                            }
+                        }
+                    };
+                });
+            },
+
+            // Delegated Actions
+            setProgramStartDate: async (date) => {
+                const pid = get().activeProcessId;
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: { ...state.processes[pid], programStartDate: date }
                     }
-                }
-            }));
-        }
+                }));
+                await supabase.from('scheduler_process_configs').update({ program_start_date: date }).eq('id', pid);
+                get().recalculateSchedule();
+            },
 
-        if (itemsRes.data) {
-            const mappedItems: ProductionScheduleItem[] = itemsRes.data.map(d => ({
-                id: d.id,
-                sequenceOrder: d.sequence_order,
-                skuCode: d.sku_code,
-                quantity: Number(d.quantity),
-                stoppages: d.stoppages,
-                startTime: new Date(), // Will be recalculated
-                endTime: new Date(),
-                calculatedPace: 0,
-                productionTimeMinutes: 0
-            }));
+            addScheduleItem: async (item) => {
+                (get() as any)._saveSnapshot();
+                const pid = get().activeProcessId;
+                const pData = get().processes[pid];
+                const newItem: ProductionScheduleItem = {
+                    ...item,
+                    id: crypto.randomUUID(),
+                    sequenceOrder: pData.schedule.length,
+                };
 
-            set((state) => ({
-                processes: {
-                    ...state.processes,
-                    [processId]: {
-                        ...state.processes[processId],
-                        schedule: mappedItems
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: { ...pData, schedule: [...pData.schedule, newItem] }
                     }
-                }
-            }));
-        }
+                }));
 
-        if (stopsRes.data && stopsRes.data.length > 0) {
-            set((state) => ({
-                processes: {
-                    ...state.processes,
-                    [processId]: {
-                        ...state.processes[processId],
-                        stoppageConfigs: stopsRes.data.map(s => ({
-                            id: s.id,
-                            colId: s.col_id,
-                            label: s.label,
-                            defaultDuration: Number(s.default_duration)
-                        }))
+                await (get() as any).saveProcessItems(pid, get().processes[pid].schedule);
+                get().recalculateSchedule();
+            },
+
+            insertScheduleItem: async (index, item) => {
+                (get() as any)._saveSnapshot();
+                const pid = get().activeProcessId;
+                const pData = get().processes[pid];
+                const newSchedule = [...pData.schedule];
+                newSchedule.splice(index, 0, item);
+                const sequenced = newSchedule.map((it, idx) => ({ ...it, sequenceOrder: idx }));
+
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: { ...pData, schedule: sequenced }
                     }
-                }
-            }));
-        }
+                }));
 
-        if (manualRes.data) {
-            set((state) => ({
-                processes: {
-                    ...state.processes,
-                    [processId]: {
-                        ...state.processes[processId],
-                        manualStops: manualRes.data.map(m => ({
-                            id: m.id,
-                            start: new Date(m.start_time),
-                            durationMinutes: Number(m.duration_minutes),
-                            label: m.label
-                        }))
+                await (get() as any).saveProcessItems(pid, sequenced);
+                get().recalculateSchedule();
+            },
+
+            addScheduleItems: async (items) => {
+                (get() as any)._saveSnapshot();
+                const pid = get().activeProcessId;
+                const pData = get().processes[pid];
+                const newSchedule = [...pData.schedule, ...items].map((it, idx) => ({ ...it, sequenceOrder: idx }));
+
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: { ...pData, schedule: newSchedule }
                     }
-                }
-            }));
-        }
+                }));
 
-        get().recalculateSchedule();
-    },
+                await (get() as any).saveProcessItems(pid, newSchedule);
+                get().recalculateSchedule();
+            },
 
-    saveProcessItems: async (processId: ProcessId, items: ProductionScheduleItem[]) => {
-        // Bulk sync production items
-        await supabase.from('scheduler_production_items').delete().eq('process_id', processId);
-        const toInsert = items.map(it => ({
-            id: it.id || crypto.randomUUID(),
-            process_id: processId,
-            sequence_order: it.sequenceOrder,
-            sku_code: it.skuCode,
-            quantity: it.quantity,
-            stoppages: it.stoppages
-        }));
-        await supabase.from('scheduler_production_items').insert(toInsert);
-    },
+            updateScheduleItem: async (id, updates) => {
+                const pid = get().activeProcessId;
+                const pData = get().processes[pid];
+                const newSchedule = pData.schedule.map(s => s.id === id ? { ...s, ...updates } : s);
 
-    _saveSnapshot: () => {
-        set((state) => {
-            const pid = state.activeProcessId;
-            const pData = state.processes[pid];
-            return {
-                processes: {
-                    ...state.processes,
-                    [pid]: {
-                        ...pData,
-                        scheduleHistory: [JSON.parse(JSON.stringify(pData.schedule)), ...pData.scheduleHistory].slice(0, MAX_HISTORY)
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: { ...pData, schedule: newSchedule }
                     }
+                }));
+
+                // Selective update in DB for performance
+                await supabase.from('scheduler_production_items').update({
+                    sku_code: updates.skuCode,
+                    quantity: updates.quantity,
+                    stoppages: updates.stoppages,
+                    sequence_order: updates.sequenceOrder
+                }).eq('id', id);
+
+                get().recalculateSchedule();
+            },
+
+            deleteScheduleItem: async (id) => {
+                (get() as any)._saveSnapshot();
+                const pid = get().activeProcessId;
+                const pData = get().processes[pid];
+                const newSchedule = pData.schedule.filter(s => s.id !== id).map((it, idx) => ({ ...it, sequenceOrder: idx }));
+
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: { ...pData, schedule: newSchedule }
+                    }
+                }));
+
+                await supabase.from('scheduler_production_items').delete().eq('id', id);
+                // Resync orders
+                await (get() as any).saveProcessItems(pid, newSchedule);
+                get().recalculateSchedule();
+            },
+
+            clearSchedule: async () => {
+                (get() as any)._saveSnapshot();
+                const pid = get().activeProcessId;
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: { ...state.processes[pid], schedule: [] }
+                    }
+                }));
+                await supabase.from('scheduler_production_items').delete().eq('process_id', pid);
+            },
+
+            reorderSchedule: async (newOrder) => {
+                (get() as any)._saveSnapshot();
+                const pid = get().activeProcessId;
+                const sequenced = newOrder.map((item, idx) => ({ ...item, sequenceOrder: idx }));
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: { ...state.processes[pid], schedule: sequenced }
+                    }
+                }));
+                await (get() as any).saveProcessItems(pid, sequenced);
+                get().recalculateSchedule();
+            },
+
+            addStoppageConfig: async (config) => {
+                const pid = get().activeProcessId;
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: {
+                            ...state.processes[pid],
+                            stoppageConfigs: [...state.processes[pid].stoppageConfigs, config]
+                        }
+                    }
+                }));
+                await supabase.from('scheduler_stoppage_configs').insert({
+                    id: config.id,
+                    process_id: pid,
+                    col_id: config.colId,
+                    label: config.label,
+                    default_duration: config.defaultDuration
+                });
+            },
+
+            removeStoppageConfig: async (id) => {
+                const pid = get().activeProcessId;
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: {
+                            ...state.processes[pid],
+                            stoppageConfigs: state.processes[pid].stoppageConfigs.filter(c => c.id !== id)
+                        }
+                    }
+                }));
+                await supabase.from('scheduler_stoppage_configs').delete().eq('id', id);
+            },
+
+            recalculateSchedule: () => {
+                const state = get();
+                const pid = state.activeProcessId;
+                const pData = state.processes[pid];
+
+                const { schedule, programStartDate, holidays, manualStops, workSchedule } = pData;
+                const articles = useArticleStore.getState().getArticles(pid);
+                const rules = useChangeoverStore.getState().getRules(pid);
+
+                const newSchedule = recalculate(schedule, articles, rules, programStartDate, holidays, manualStops, workSchedule);
+
+                set((s) => ({
+                    processes: {
+                        ...s.processes,
+                        [pid]: { ...s.processes[pid], schedule: newSchedule }
+                    }
+                }));
+            },
+
+            undo: async () => {
+                const state = get();
+                const pid = state.activeProcessId;
+                const pData = state.processes[pid];
+                if (pData.scheduleHistory.length === 0) return;
+
+                const [lastState, ...rest] = pData.scheduleHistory;
+                set((s) => ({
+                    processes: {
+                        ...s.processes,
+                        [pid]: { ...s.processes[pid], schedule: lastState, scheduleHistory: rest }
+                    }
+                }));
+                await (get() as any).saveProcessItems(pid, lastState);
+                get().recalculateSchedule();
+            },
+
+            canUndo: () => {
+                const state = get();
+                const pid = state.activeProcessId;
+                return state.processes[pid].scheduleHistory.length > 0;
+            },
+
+            setColumnLabel: async (field, label) => {
+                const pid = get().activeProcessId;
+                const pData = get().processes[pid];
+                const newLabels = { ...pData.columnLabels, [field]: label };
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: { ...pData, columnLabels: newLabels }
+                    }
+                }));
+                await supabase.from('scheduler_process_configs').update({ column_labels: newLabels }).eq('id', pid);
+            },
+
+            setSchedule: async (schedule) => {
+                const pid = get().activeProcessId;
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: { ...state.processes[pid], schedule, scheduleHistory: [] }
+                    }
+                }));
+                await (get() as any).saveProcessItems(pid, schedule);
+                get().recalculateSchedule();
+            },
+
+            setStoppageConfigs: async (configs) => {
+                const pid = get().activeProcessId;
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: { ...state.processes[pid], stoppageConfigs: configs }
+                    }
+                }));
+                // For bulk update configs: delete and insert
+                await supabase.from('scheduler_stoppage_configs').delete().eq('process_id', pid);
+                await supabase.from('scheduler_stoppage_configs').insert(configs.map(c => ({
+                    id: c.id,
+                    process_id: pid,
+                    col_id: c.colId,
+                    label: c.label,
+                    default_duration: c.defaultDuration
+                })));
+            },
+
+            importColumnLabels: async (labels) => {
+                const pid = get().activeProcessId;
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: { ...state.processes[pid], columnLabels: labels }
+                    }
+                }));
+                await supabase.from('scheduler_process_configs').update({ column_labels: labels }).eq('id', pid);
+            },
+
+            addHoliday: async (date) => {
+                const pid = get().activeProcessId;
+                const pData = get().processes[pid];
+                if (pData.holidays.includes(date)) return;
+                const newHolidays = [...pData.holidays, date].sort();
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: { ...pData, holidays: newHolidays }
+                    }
+                }));
+                await supabase.from('scheduler_process_configs').update({ holidays: newHolidays }).eq('id', pid);
+            },
+
+            removeHoliday: async (date) => {
+                const pid = get().activeProcessId;
+                const pData = get().processes[pid];
+                const newHolidays = pData.holidays.filter(d => d !== date);
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: { ...pData, holidays: newHolidays }
+                    }
+                }));
+                await supabase.from('scheduler_process_configs').update({ holidays: newHolidays }).eq('id', pid);
+            },
+
+            isHoliday: (date) => {
+                const state = get();
+                const pid = state.activeProcessId;
+                const pData = state.processes[pid];
+                const dateStr = format(date, 'yyyy-MM-dd');
+                return pData.holidays.includes(dateStr);
+            },
+
+            addManualStop: async (stop) => {
+                (get() as any)._saveSnapshot();
+                const pid = get().activeProcessId;
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: {
+                            ...state.processes[pid],
+                            manualStops: [...state.processes[pid].manualStops, stop]
+                        }
+                    }
+                }));
+                await supabase.from('scheduler_manual_stops').insert({
+                    id: stop.id || crypto.randomUUID(),
+                    process_id: pid,
+                    start_time: stop.start,
+                    duration_minutes: stop.durationMinutes,
+                    label: stop.label
+                });
+                get().recalculateSchedule();
+            },
+
+            updateManualStop: async (id, updates) => {
+                (get() as any)._saveSnapshot();
+                const pid = get().activeProcessId;
+                const pData = get().processes[pid];
+                const newStops = pData.manualStops.map(s => s.id === id ? { ...s, ...updates } : s);
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: { ...pData, manualStops: newStops }
+                    }
+                }));
+                await supabase.from('scheduler_manual_stops').update({
+                    start_time: updates.start,
+                    duration_minutes: updates.durationMinutes,
+                    label: updates.label
+                }).eq('id', id);
+                get().recalculateSchedule();
+            },
+
+            deleteManualStop: async (id) => {
+                (get() as any)._saveSnapshot();
+                const pid = get().activeProcessId;
+                const pData = get().processes[pid];
+                const newStops = pData.manualStops.filter(s => s.id !== id);
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: { ...pData, manualStops: newStops }
+                    }
+                }));
+                await supabase.from('scheduler_manual_stops').delete().eq('id', id);
+                get().recalculateSchedule();
+            },
+
+            setManualStops: async (stops) => {
+                const pid = get().activeProcessId;
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: { ...state.processes[pid], manualStops: stops }
+                    }
+                }));
+                await supabase.from('scheduler_manual_stops').delete().eq('process_id', pid);
+                await supabase.from('scheduler_manual_stops').insert(stops.map(s => ({
+                    id: s.id || crypto.randomUUID(),
+                    process_id: pid,
+                    start_time: s.start,
+                    duration_minutes: s.durationMinutes,
+                    label: s.label
+                })));
+            },
+
+            setWorkSchedule: async (schedule) => {
+                const pid = get().activeProcessId;
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: { ...state.processes[pid], workSchedule: schedule }
+                    }
+                }));
+                await supabase.from('scheduler_process_configs').update({ work_schedule: schedule }).eq('id', pid);
+                get().recalculateSchedule();
+            },
+
+            setVisualTargetDate: async (date) => {
+                const pid = get().activeProcessId;
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: { ...state.processes[pid], visualTargetDate: date }
+                    }
+                }));
+                await supabase.from('scheduler_process_configs').update({ visual_target_date: date }).eq('id', pid);
+            },
+
+            updateItemEndTime: async (itemId, targetEndDate) => {
+                const state = get();
+                const pid = state.activeProcessId;
+                const pData = state.processes[pid];
+                const { schedule, programStartDate, holidays, manualStops, workSchedule } = pData;
+                const articles = useArticleStore.getState().getArticles(pid);
+                const rules = useChangeoverStore.getState().getRules(pid);
+
+                const itemIndex = schedule.findIndex(s => s.id === itemId);
+                if (itemIndex === -1) return;
+                const item = schedule[itemIndex];
+
+                if (!item.startTime) return;
+                const startTime = new Date(item.startTime);
+
+                if (targetEndDate <= startTime) {
+                    alert('La fecha fin debe ser posterior a la fecha de inicio.');
+                    return;
                 }
-            };
-        });
-    },
 
-    // Delegated Actions
-    setProgramStartDate: async (date) => {
-        const pid = get().activeProcessId;
-        set((state) => ({
-            processes: {
-                ...state.processes,
-                [pid]: { ...state.processes[pid], programStartDate: date }
-            }
-        }));
-        await supabase.from('scheduler_process_configs').update({ program_start_date: date }).eq('id', pid);
-        get().recalculateSchedule();
-    },
+                const pace = item.calculatedPace || 1;
+                const targetDurationMinutes = (targetEndDate.getTime() - startTime.getTime()) / 60000;
 
-    addScheduleItem: async (item) => {
-        (get() as any)._saveSnapshot();
-        const pid = get().activeProcessId;
-        const pData = get().processes[pid];
-        const newItem: ProductionScheduleItem = {
-            ...item,
-            id: crypto.randomUUID(),
-            sequenceOrder: pData.schedule.length,
-        };
-
-        set((state) => ({
-            processes: {
-                ...state.processes,
-                [pid]: { ...pData, schedule: [...pData.schedule, newItem] }
-            }
-        }));
-
-        await (get() as any).saveProcessItems(pid, get().processes[pid].schedule);
-        get().recalculateSchedule();
-    },
-
-    insertScheduleItem: async (index, item) => {
-        (get() as any)._saveSnapshot();
-        const pid = get().activeProcessId;
-        const pData = get().processes[pid];
-        const newSchedule = [...pData.schedule];
-        newSchedule.splice(index, 0, item);
-        const sequenced = newSchedule.map((it, idx) => ({ ...it, sequenceOrder: idx }));
-
-        set((state) => ({
-            processes: {
-                ...state.processes,
-                [pid]: { ...pData, schedule: sequenced }
-            }
-        }));
-
-        await (get() as any).saveProcessItems(pid, sequenced);
-        get().recalculateSchedule();
-    },
-
-    addScheduleItems: async (items) => {
-        (get() as any)._saveSnapshot();
-        const pid = get().activeProcessId;
-        const pData = get().processes[pid];
-        const newSchedule = [...pData.schedule, ...items].map((it, idx) => ({ ...it, sequenceOrder: idx }));
-
-        set((state) => ({
-            processes: {
-                ...state.processes,
-                [pid]: { ...pData, schedule: newSchedule }
-            }
-        }));
-
-        await (get() as any).saveProcessItems(pid, newSchedule);
-        get().recalculateSchedule();
-    },
-
-    updateScheduleItem: async (id, updates) => {
-        const pid = get().activeProcessId;
-        const pData = get().processes[pid];
-        const newSchedule = pData.schedule.map(s => s.id === id ? { ...s, ...updates } : s);
-
-        set((state) => ({
-            processes: {
-                ...state.processes,
-                [pid]: { ...pData, schedule: newSchedule }
-            }
-        }));
-
-        // Selective update in DB for performance
-        await supabase.from('scheduler_production_items').update({
-            sku_code: updates.skuCode,
-            quantity: updates.quantity,
-            stoppages: updates.stoppages,
-            sequence_order: updates.sequenceOrder
-        }).eq('id', id);
-
-        get().recalculateSchedule();
-    },
-
-    deleteScheduleItem: async (id) => {
-        (get() as any)._saveSnapshot();
-        const pid = get().activeProcessId;
-        const pData = get().processes[pid];
-        const newSchedule = pData.schedule.filter(s => s.id !== id).map((it, idx) => ({ ...it, sequenceOrder: idx }));
-
-        set((state) => ({
-            processes: {
-                ...state.processes,
-                [pid]: { ...pData, schedule: newSchedule }
-            }
-        }));
-
-        await supabase.from('scheduler_production_items').delete().eq('id', id);
-        // Resync orders
-        await (get() as any).saveProcessItems(pid, newSchedule);
-        get().recalculateSchedule();
-    },
-
-    clearSchedule: async () => {
-        (get() as any)._saveSnapshot();
-        const pid = get().activeProcessId;
-        set((state) => ({
-            processes: {
-                ...state.processes,
-                [pid]: { ...state.processes[pid], schedule: [] }
-            }
-        }));
-        await supabase.from('scheduler_production_items').delete().eq('process_id', pid);
-    },
-
-    reorderSchedule: async (newOrder) => {
-        (get() as any)._saveSnapshot();
-        const pid = get().activeProcessId;
-        const sequenced = newOrder.map((item, idx) => ({ ...item, sequenceOrder: idx }));
-        set((state) => ({
-            processes: {
-                ...state.processes,
-                [pid]: { ...state.processes[pid], schedule: sequenced }
-            }
-        }));
-        await (get() as any).saveProcessItems(pid, sequenced);
-        get().recalculateSchedule();
-    },
-
-    addStoppageConfig: async (config) => {
-        const pid = get().activeProcessId;
-        set((state) => ({
-            processes: {
-                ...state.processes,
-                [pid]: {
-                    ...state.processes[pid],
-                    stoppageConfigs: [...state.processes[pid].stoppageConfigs, config]
+                let currentDuration = item.productionTimeMinutes || 0;
+                if (item.endTime && item.startTime) {
+                    currentDuration = (new Date(item.endTime).getTime() - new Date(item.startTime).getTime()) / 60000;
                 }
-            }
-        }));
-        await supabase.from('scheduler_stoppage_configs').insert({
-            id: config.id,
-            process_id: pid,
-            col_id: config.colId,
-            label: config.label,
-            default_duration: config.defaultDuration
-        });
-    },
 
-    removeStoppageConfig: async (id) => {
-        const pid = get().activeProcessId;
-        set((state) => ({
-            processes: {
-                ...state.processes,
-                [pid]: {
-                    ...state.processes[pid],
-                    stoppageConfigs: state.processes[pid].stoppageConfigs.filter(c => c.id !== id)
+                let estimatedQuantity = 0;
+                if (item.quantity > 0 && currentDuration > 0) {
+                    estimatedQuantity = item.quantity * (targetDurationMinutes / currentDuration);
+                } else {
+                    estimatedQuantity = (targetDurationMinutes / 60) * pace;
                 }
-            }
-        }));
-        await supabase.from('scheduler_stoppage_configs').delete().eq('id', id);
-    },
 
-    recalculateSchedule: () => {
-        const state = get();
-        const pid = state.activeProcessId;
-        const pData = state.processes[pid];
+                let bestQuantity = estimatedQuantity;
 
-        const { schedule, programStartDate, holidays, manualStops, workSchedule } = pData;
-        const articles = useArticleStore.getState().getArticles(pid);
-        const rules = useChangeoverStore.getState().getRules(pid);
+                const testQuantity = (q: number) => {
+                    const tempSchedule = [...schedule];
+                    tempSchedule[itemIndex] = { ...item, quantity: q };
+                    const simulated = recalculate(tempSchedule, articles, rules, programStartDate, holidays, manualStops, workSchedule);
+                    const simulatedItem = simulated[itemIndex];
+                    if (!simulatedItem.computedEnd) return { error: Infinity, diff: 0, end: new Date() };
+                    const diffMinutes = (simulatedItem.computedEnd.getTime() - targetEndDate.getTime()) / 60000;
+                    return { error: Math.abs(diffMinutes), diff: diffMinutes, end: simulatedItem.computedEnd };
+                };
 
-        const newSchedule = recalculate(schedule, articles, rules, programStartDate, holidays, manualStops, workSchedule);
-
-        set((s) => ({
-            processes: {
-                ...s.processes,
-                [pid]: { ...s.processes[pid], schedule: newSchedule }
-            }
-        }));
-    },
-
-    undo: async () => {
-        const state = get();
-        const pid = state.activeProcessId;
-        const pData = state.processes[pid];
-        if (pData.scheduleHistory.length === 0) return;
-
-        const [lastState, ...rest] = pData.scheduleHistory;
-        set((s) => ({
-            processes: {
-                ...s.processes,
-                [pid]: { ...s.processes[pid], schedule: lastState, scheduleHistory: rest }
-            }
-        }));
-        await (get() as any).saveProcessItems(pid, lastState);
-        get().recalculateSchedule();
-    },
-
-    canUndo: () => {
-        const state = get();
-        const pid = state.activeProcessId;
-        return state.processes[pid].scheduleHistory.length > 0;
-    },
-
-    setColumnLabel: async (field, label) => {
-        const pid = get().activeProcessId;
-        const pData = get().processes[pid];
-        const newLabels = { ...pData.columnLabels, [field]: label };
-        set((state) => ({
-            processes: {
-                ...state.processes,
-                [pid]: { ...pData, columnLabels: newLabels }
-            }
-        }));
-        await supabase.from('scheduler_process_configs').update({ column_labels: newLabels }).eq('id', pid);
-    },
-
-    setSchedule: async (schedule) => {
-        const pid = get().activeProcessId;
-        set((state) => ({
-            processes: {
-                ...state.processes,
-                [pid]: { ...state.processes[pid], schedule, scheduleHistory: [] }
-            }
-        }));
-        await (get() as any).saveProcessItems(pid, schedule);
-        get().recalculateSchedule();
-    },
-
-    setStoppageConfigs: async (configs) => {
-        const pid = get().activeProcessId;
-        set((state) => ({
-            processes: {
-                ...state.processes,
-                [pid]: { ...state.processes[pid], stoppageConfigs: configs }
-            }
-        }));
-        // For bulk update configs: delete and insert
-        await supabase.from('scheduler_stoppage_configs').delete().eq('process_id', pid);
-        await supabase.from('scheduler_stoppage_configs').insert(configs.map(c => ({
-            id: c.id,
-            process_id: pid,
-            col_id: c.colId,
-            label: c.label,
-            default_duration: c.defaultDuration
-        })));
-    },
-
-    importColumnLabels: async (labels) => {
-        const pid = get().activeProcessId;
-        set((state) => ({
-            processes: {
-                ...state.processes,
-                [pid]: { ...state.processes[pid], columnLabels: labels }
-            }
-        }));
-        await supabase.from('scheduler_process_configs').update({ column_labels: labels }).eq('id', pid);
-    },
-
-    addHoliday: async (date) => {
-        const pid = get().activeProcessId;
-        const pData = get().processes[pid];
-        if (pData.holidays.includes(date)) return;
-        const newHolidays = [...pData.holidays, date].sort();
-        set((state) => ({
-            processes: {
-                ...state.processes,
-                [pid]: { ...pData, holidays: newHolidays }
-            }
-        }));
-        await supabase.from('scheduler_process_configs').update({ holidays: newHolidays }).eq('id', pid);
-    },
-
-    removeHoliday: async (date) => {
-        const pid = get().activeProcessId;
-        const pData = get().processes[pid];
-        const newHolidays = pData.holidays.filter(d => d !== date);
-        set((state) => ({
-            processes: {
-                ...state.processes,
-                [pid]: { ...pData, holidays: newHolidays }
-            }
-        }));
-        await supabase.from('scheduler_process_configs').update({ holidays: newHolidays }).eq('id', pid);
-    },
-
-    isHoliday: (date) => {
-        const state = get();
-        const pid = state.activeProcessId;
-        const pData = state.processes[pid];
-        const dateStr = format(date, 'yyyy-MM-dd');
-        return pData.holidays.includes(dateStr);
-    },
-
-    addManualStop: async (stop) => {
-        (get() as any)._saveSnapshot();
-        const pid = get().activeProcessId;
-        set((state) => ({
-            processes: {
-                ...state.processes,
-                [pid]: {
-                    ...state.processes[pid],
-                    manualStops: [...state.processes[pid].manualStops, stop]
+                for (let i = 0; i < 3; i++) {
+                    const result = testQuantity(bestQuantity);
+                    if (result.error < 2) break;
+                    const adjustment = result.diff * (pace / 60);
+                    bestQuantity -= adjustment;
+                    if (bestQuantity < 0) bestQuantity = 0;
                 }
-            }
-        }));
-        await supabase.from('scheduler_manual_stops').insert({
-            id: stop.id || crypto.randomUUID(),
-            process_id: pid,
-            start_time: stop.start,
-            duration_minutes: stop.durationMinutes,
-            label: stop.label
-        });
-        get().recalculateSchedule();
-    },
 
-    updateManualStop: async (id, updates) => {
-        (get() as any)._saveSnapshot();
-        const pid = get().activeProcessId;
-        const pData = get().processes[pid];
-        const newStops = pData.manualStops.map(s => s.id === id ? { ...s, ...updates } : s);
-        set((state) => ({
-            processes: {
-                ...state.processes,
-                [pid]: { ...pData, manualStops: newStops }
-            }
-        }));
-        await supabase.from('scheduler_manual_stops').update({
-            start_time: updates.start,
-            duration_minutes: updates.durationMinutes,
-            label: updates.label
-        }).eq('id', id);
-        get().recalculateSchedule();
-    },
+                (get() as any)._saveSnapshot();
+                const newSchedule = pData.schedule.map((s, idx) => (idx === itemIndex ? { ...s, quantity: Math.round(bestQuantity * 100) / 100 } : s));
+                set((s) => ({
+                    processes: {
+                        ...s.processes,
+                        [pid]: {
+                            ...s.processes[pid],
+                            schedule: newSchedule
+                        }
+                    }
+                }));
+                await supabase.from('scheduler_production_items').update({
+                    quantity: Math.round(bestQuantity * 100) / 100
+                }).eq('id', itemId);
+                get().recalculateSchedule();
+            },
 
-    deleteManualStop: async (id) => {
-        (get() as any)._saveSnapshot();
-        const pid = get().activeProcessId;
-        const pData = get().processes[pid];
-        const newStops = pData.manualStops.filter(s => s.id !== id);
-        set((state) => ({
-            processes: {
-                ...state.processes,
-                [pid]: { ...pData, manualStops: newStops }
-            }
-        }));
-        await supabase.from('scheduler_manual_stops').delete().eq('id', id);
-        get().recalculateSchedule();
-    },
-
-    setManualStops: async (stops) => {
-        const pid = get().activeProcessId;
-        set((state) => ({
-            processes: {
-                ...state.processes,
-                [pid]: { ...state.processes[pid], manualStops: stops }
-            }
-        }));
-        await supabase.from('scheduler_manual_stops').delete().eq('process_id', pid);
-        await supabase.from('scheduler_manual_stops').insert(stops.map(s => ({
-            id: s.id || crypto.randomUUID(),
-            process_id: pid,
-            start_time: s.start,
-            duration_minutes: s.durationMinutes,
-            label: s.label
-        })));
-    },
-
-    setWorkSchedule: async (schedule) => {
-        const pid = get().activeProcessId;
-        set((state) => ({
-            processes: {
-                ...state.processes,
-                [pid]: { ...state.processes[pid], workSchedule: schedule }
-            }
-        }));
-        await supabase.from('scheduler_process_configs').update({ work_schedule: schedule }).eq('id', pid);
-        get().recalculateSchedule();
-    },
-
-    setVisualTargetDate: async (date) => {
-        const pid = get().activeProcessId;
-        set((state) => ({
-            processes: {
-                ...state.processes,
-                [pid]: { ...state.processes[pid], visualTargetDate: date }
-            }
-        }));
-        await supabase.from('scheduler_process_configs').update({ visual_target_date: date }).eq('id', pid);
-    },
-
-    updateItemEndTime: async (itemId, targetEndDate) => {
-        const state = get();
-        const pid = state.activeProcessId;
-        const pData = state.processes[pid];
-        const { schedule, programStartDate, holidays, manualStops, workSchedule } = pData;
-        const articles = useArticleStore.getState().getArticles(pid);
-        const rules = useChangeoverStore.getState().getRules(pid);
-
-        const itemIndex = schedule.findIndex(s => s.id === itemId);
-        if (itemIndex === -1) return;
-        const item = schedule[itemIndex];
-
-        if (!item.startTime) return;
-        const startTime = new Date(item.startTime);
-
-        if (targetEndDate <= startTime) {
-            alert('La fecha fin debe ser posterior a la fecha de inicio.');
-            return;
+            saveSequencerConfig: async (config) => {
+                const pid = get().activeProcessId;
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: {
+                            ...state.processes[pid],
+                            sequencerConfig: config
+                        }
+                    }
+                }));
+                await supabase.from('scheduler_process_configs').update({ sequencer_config: config }).eq('id', pid);
+            },
+        }),
+        {
+            name: 'scheduler-storage',
+            partialize: (state) => ({
+                activeTab: state.activeTab,
+                activeProcessId: state.activeProcessId,
+            }),
         }
-
-        const pace = item.calculatedPace || 1;
-        const targetDurationMinutes = (targetEndDate.getTime() - startTime.getTime()) / 60000;
-
-        let currentDuration = item.productionTimeMinutes || 0;
-        if (item.endTime && item.startTime) {
-            currentDuration = (new Date(item.endTime).getTime() - new Date(item.startTime).getTime()) / 60000;
-        }
-
-        let estimatedQuantity = 0;
-        if (item.quantity > 0 && currentDuration > 0) {
-            estimatedQuantity = item.quantity * (targetDurationMinutes / currentDuration);
-        } else {
-            estimatedQuantity = (targetDurationMinutes / 60) * pace;
-        }
-
-        let bestQuantity = estimatedQuantity;
-
-        const testQuantity = (q: number) => {
-            const tempSchedule = [...schedule];
-            tempSchedule[itemIndex] = { ...item, quantity: q };
-            const simulated = recalculate(tempSchedule, articles, rules, programStartDate, holidays, manualStops, workSchedule);
-            const simulatedItem = simulated[itemIndex];
-            if (!simulatedItem.computedEnd) return { error: Infinity, diff: 0, end: new Date() };
-            const diffMinutes = (simulatedItem.computedEnd.getTime() - targetEndDate.getTime()) / 60000;
-            return { error: Math.abs(diffMinutes), diff: diffMinutes, end: simulatedItem.computedEnd };
-        };
-
-        for (let i = 0; i < 3; i++) {
-            const result = testQuantity(bestQuantity);
-            if (result.error < 2) break;
-            const adjustment = result.diff * (pace / 60);
-            bestQuantity -= adjustment;
-            if (bestQuantity < 0) bestQuantity = 0;
-        }
-
-        (get() as any)._saveSnapshot();
-        const newSchedule = pData.schedule.map((s, idx) => (idx === itemIndex ? { ...s, quantity: Math.round(bestQuantity * 100) / 100 } : s));
-        set((s) => ({
-            processes: {
-                ...s.processes,
-                [pid]: {
-                    ...s.processes[pid],
-                    schedule: newSchedule
-                }
-            }
-        }));
-        await supabase.from('scheduler_production_items').update({
-            quantity: Math.round(bestQuantity * 100) / 100
-        }).eq('id', itemId);
-        get().recalculateSchedule();
-    },
-
-    saveSequencerConfig: async (config) => {
-        const pid = get().activeProcessId;
-        set((state) => ({
-            processes: {
-                ...state.processes,
-                [pid]: {
-                    ...state.processes[pid],
-                    sequencerConfig: config
-                }
-            }
-        }));
-        await supabase.from('scheduler_process_configs').update({ sequencer_config: config }).eq('id', pid);
-    },
-}));
+    ));

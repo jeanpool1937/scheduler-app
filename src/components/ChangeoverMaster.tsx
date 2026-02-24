@@ -11,7 +11,8 @@ import { useStore } from '../store/useStore';
 
 export const ChangeoverMaster: React.FC = () => {
     const activeProcessId = useStore((state) => state.activeProcessId);
-    const rules = useChangeoverStore((state) => state.getRules(activeProcessId));
+    // Acceso directo al array para garantizar reactividad en Zustand
+    const rules = useChangeoverStore((state) => state.rulesByProcess[activeProcessId] || []);
     const { setRules, addRule, updateRule, deleteRules } = useChangeoverStore();
     const gridRef = useRef<AgGridReact>(null);
     const [gridApi, setGridApi] = useState<GridApi | null>(null);
@@ -55,40 +56,36 @@ export const ChangeoverMaster: React.FC = () => {
             const wb = XLSX.read(bstr, { type: 'binary' });
             const wsname = wb.SheetNames[0];
             const ws = wb.Sheets[wsname];
-            // Read as array of arrays (no headers assumption)
-            const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
 
-            if (!data || data.length === 0) return;
+            // Usar el rango REAL del Excel para no truncar por filas vacías
+            const sheetRef = ws['!ref'];
+            if (!sheetRef) return;
+            const range = XLSX.utils.decode_range(sheetRef);
+            const totalRows = range.e.r - range.s.r + 1;
+            const totalCols = range.e.c - range.s.c + 1;
 
             const newRules: ChangeoverRule[] = [];
 
-            // The user specifies: "position in the table is the id... first row is for sku with id 1"
-            // So: Row Index 0 -> From ID "1"
-            //     Col Index 0 -> To ID "1"
-
-            for (let rowIndex = 0; rowIndex < data.length; rowIndex++) {
-                const row = data[rowIndex];
-                // Skip empty rows if any, but maintain index-to-ID mapping?
-                // "position is the id" imply row 0 is ALWAYS ID 1. If row 0 is empty, ID 1 has no rules.
-                if (!row) continue;
-
-                const fromId = (rowIndex + 1).toString();
-
-                for (let colIndex = 0; colIndex < row.length; colIndex++) {
-                    const toId = (colIndex + 1).toString();
-                    const duration = row[colIndex];
-
-                    // Import if it is a valid number
-                    if (typeof duration === 'number') {
+            // Posición = ID: Fila 0 -> From ID "1", Columna 0 -> To ID "1"
+            for (let rowIdx = 0; rowIdx < totalRows; rowIdx++) {
+                const fromId = (rowIdx + 1).toString();
+                for (let colIdx = 0; colIdx < totalCols; colIdx++) {
+                    const cellAddr = XLSX.utils.encode_cell({
+                        r: range.s.r + rowIdx,
+                        c: range.s.c + colIdx
+                    });
+                    const cell = ws[cellAddr];
+                    // Solo importar celdas con valor numérico real
+                    if (cell && cell.t === 'n' && typeof cell.v === 'number') {
                         newRules.push({
-                            fromId: fromId,
-                            toId: toId,
-                            durationHours: duration
+                            fromId,
+                            toId: (colIdx + 1).toString(),
+                            durationHours: cell.v
                         });
                     }
                 }
             }
-
+            console.log(`[Importar Matriz] ${newRules.length} reglas importadas (${totalRows} filas x ${totalCols} cols)`);
             setRules(activeProcessId, newRules);
         };
         reader.readAsBinaryString(file);

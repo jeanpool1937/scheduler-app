@@ -141,3 +141,4 @@ Pueden interrumpir una orden o insertarse entre órdenes.
 1. **Fuente de Verdad**: Este README define el funcionamiento esperado.
 2. **Validación**: Todo cambio en lógica de tiempos debe ser verificado en `src/store/useStore.ts`.
 3. **Idioma**: Documentación y comunicación en **Español**.
+4. **Replicación de Cambios**: **Aplicar siempre los cambios funcionales o de datos a los 3 laminadores (Laminador 1, Laminador 2, Laminador 3)** a menos que se especifique lo contrario explícitamente.

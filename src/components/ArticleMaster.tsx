@@ -16,7 +16,8 @@ import { useStore } from '../store/useStore';
 
 export const ArticleMaster: React.FC = () => {
     const activeProcessId = useStore((state) => state.activeProcessId);
-    const articles = useArticleStore((state) => state.getArticles(activeProcessId));
+    // Acceso directo al array para garantizar reactividad en Zustand
+    const articles = useArticleStore((state) => state.articlesByProcess[activeProcessId] || []);
     const { setArticles, addArticle, updateArticle, deleteArticles } = useArticleStore();
     const gridRef = useRef<AgGridReact>(null);
     const [gridApi, setGridApi] = useState<GridApi | null>(null);

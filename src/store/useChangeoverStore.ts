@@ -9,6 +9,7 @@ interface ChangeoverStore {
 
     // Actions
     fetchRules: (processId: ProcessId) => Promise<void>;
+    fetchAllRules: () => Promise<void>;
     setRules: (processId: ProcessId, rules: ChangeoverRule[]) => Promise<void>;
     addRule: (processId: ProcessId, rule: ChangeoverRule) => Promise<void>;
     updateRule: (processId: ProcessId, id: string, rule: Partial<ChangeoverRule>) => Promise<void>;
@@ -46,18 +47,36 @@ export const useChangeoverStore = create<ChangeoverStore>((set, get) => ({
 
     fetchRules: async (processId) => {
         set({ loading: true });
-        const { data, error } = await supabase
-            .from('scheduler_changeover_rules')
-            .select('*')
-            .eq('process_id', processId);
+        let allData: any[] = [];
+        let from = 0;
+        const step = 1000;
+        let hasMore = true;
 
-        if (error) {
-            console.error('Error fetching rules:', error);
-            set({ loading: false });
-            return;
+        while (hasMore) {
+            const { data, error } = await supabase
+                .from('scheduler_changeover_rules')
+                .select('*')
+                .eq('process_id', processId)
+                .range(from, from + step - 1);
+
+            if (error) {
+                console.error('Error fetching rules:', error);
+                set({ loading: false });
+                return;
+            }
+
+            if (data && data.length > 0) {
+                allData = [...allData, ...data];
+                from += step;
+                if (data.length < step) {
+                    hasMore = false;
+                }
+            } else {
+                hasMore = false;
+            }
         }
 
-        const rules = data.map(mapFromDb);
+        const rules = allData.map(mapFromDb);
         set((state) => ({
             rulesByProcess: {
                 ...state.rulesByProcess,
@@ -65,6 +84,34 @@ export const useChangeoverStore = create<ChangeoverStore>((set, get) => ({
             },
             loading: false
         }));
+    },
+
+    fetchAllRules: async () => {
+        set({ loading: true });
+        const { data, error } = await supabase
+            .from('scheduler_changeover_rules')
+            .select('*');
+
+        if (error) {
+            console.error('Error fetching all rules:', error);
+            set({ loading: false });
+            return;
+        }
+
+        const grouped: Record<ProcessId, ChangeoverRule[]> = {
+            'laminador1': [],
+            'laminador2': [],
+            'laminador3': [],
+        };
+
+        (data || []).forEach(row => {
+            const pId = row.process_id as ProcessId;
+            if (grouped[pId]) {
+                grouped[pId].push(mapFromDb(row));
+            }
+        });
+
+        set({ rulesByProcess: grouped, loading: false });
     },
 
     setRules: async (processId, rules) => {
