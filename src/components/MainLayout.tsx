@@ -13,6 +13,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
 
     const getTitle = () => {
         switch (activeTab) {
+            case 'planner': return 'Planificador de Capacidad y Costos';
             case 'scheduler': return 'Programación de Producción';
             case 'sequencer': return 'Optimización de Secuencia';
             case 'visual': return 'Secuencia Diaria';

@@ -6,6 +6,9 @@ interface SequencerStats {
     totalTonnage: number;
     changeovers: number;
     avgChangeoverTime: number; // in minutes
+    skus: string[];
+    quantities: number[];
+    changeoverIds: string[];
 }
 
 interface SmartExplainerProps {
@@ -17,34 +20,52 @@ export const SmartExplainer: React.FC<SmartExplainerProps> = ({ stats, onClose }
 
     const narrative = useMemo(() => {
         const lines: string[] = [];
+        const { totalTonnage, avgChangeoverTime, changeovers, quantities, changeoverIds } = stats;
 
-        // 1. Efficiency Analysis
-        if (stats.avgChangeoverTime < 30) {
-            lines.push(`🚀 **Eficiencia Alta:** El tiempo promedio de cambio se redujo a ${stats.avgChangeoverTime.toFixed(1)} min, lo cual es excelente.`);
-        } else if (stats.avgChangeoverTime > 60) {
-            lines.push(`⚠️ **Atención:** Los cambios promedian ${stats.avgChangeoverTime.toFixed(1)} min. Se recomienda revisar agrupación de calibres.`);
-        } else {
-            lines.push(`✅ **Estabilidad:** La secuencia mantiene un flujo estándar con cambios de ~${stats.avgChangeoverTime.toFixed(1)} min.`);
+        // --- Data Analyzer Module ---
+
+        // 1. Product Mix Analysis
+        const changeoverMap = new Map<string, number>();
+        for (let i = 0; i < changeoverIds.length; i++) {
+            const id = changeoverIds[i];
+            const qty = quantities[i];
+            changeoverMap.set(id, (changeoverMap.get(id) || 0) + qty);
         }
 
-        // 2. Tonnage & throughput
-        if (stats.totalTonnage > 500) {
-            lines.push(`🏭 **Alto Volumen:** Se han programado ${stats.totalTonnage.toFixed(0)} TN. La secuencia minimiza cortes para sostener este ritmo.`);
+        let dominantFamily = '';
+        let maxQty = 0;
+        changeoverMap.forEach((qty, id) => {
+            if (qty > maxQty) {
+                maxQty = qty;
+                dominantFamily = id;
+            }
+        });
+
+        const concentration = totalTonnage > 0 ? (maxQty / totalTonnage) * 100 : 0;
+        const uniqueFamilies = changeoverMap.size;
+
+        if (concentration > 50) {
+            lines.push(`📊 **Análisis del Mix:** El pool de producción está altamente concentrado. La familia de calibre **'${dominantFamily === 'S/N' ? 'Mixta' : dominantFamily}'** representa el **${concentration.toFixed(1)}%** del total a procesar (${maxQty.toLocaleString()} TN).`);
+        } else {
+            lines.push(`📊 **Análisis del Mix:** Alta fragmentación detectada. El mix se distribuye en **${uniqueFamilies}** familias de calibres distintos, lo que supone un reto algorítmico mayor. La familia líder ('${dominantFamily === 'S/N' ? 'Mixta' : dominantFamily}') ocupa solo el **${concentration.toFixed(1)}%** del plan.`);
         }
 
-        // 3. Strategic Insight (Heuristic)
-        // Simulate "AI" reasoning based on general principles
-        const strategies = [
-            "Se priorizaron los pedidos con mayor diámetro al inicio para aprovechar la inercia térmica.",
-            "Los cambios de ancho se agruparon para reducir el desperdicio de ajuste en un 15%.",
-            "Se detectó compatibilidad metalúrgica entre los lotes principales, permitiendo secuencias más largas."
-        ];
-        // Pick a strategy deterministically based on stats hash or just verify logic
-        // For now, we select based on changeover count to simulate logic
-        if (stats.changeovers < 5) {
-            lines.push(`💡 **Estrategia Aplicada:** ${strategies[2]}`);
+        // 2. Efficiency & Setup Impact
+        if (avgChangeoverTime < 30) {
+            lines.push(`🚀 **Eficiencia Lograda:** El motor genético logró agrupar estratégicamente los calibres, aplastando el promedio de setup a solo **${avgChangeoverTime.toFixed(1)} min** por cambio secuencial.`);
+        } else if (avgChangeoverTime > 60) {
+            lines.push(`⚠️ **Costos de Setup:** Pese a la optimización, la incompatibilidad entre las ${uniqueFamilies} familias forzó secuencias de **${avgChangeoverTime.toFixed(1)} min** en promedio por cambio. Evaluar viabilidad de aplazar SKUs aislados.`);
         } else {
-            lines.push(`💡 **Estrategia Aplicada:** ${strategies[1]}`);
+            lines.push(`✅ **Estabilidad Térmico-Mecánica:** Se logró un flujo estandarizado con cambios promediando **~${avgChangeoverTime.toFixed(1)} min**. La secuencia contuvo exitosamente los saltos de calibre extremos.`);
+        }
+
+        // 3. Strategic AI Insight
+        if (changeovers < uniqueFamilies * 2) {
+            lines.push(`💡 **Estrategia del Optimizador:** El Algoritmo agrupó intensivamente el bloque de mayor tonelaje (Familia ${dominantFamily}), limitando las transiciones mecánicas a estrictamente puentes inter-familia para **reducir el desperdicio de ajuste y tiempo muerto**. `);
+        } else if (concentration > 30) {
+            lines.push(`💡 **Estrategia del Optimizador:** Dada la predominancia del perfil '${dominantFamily}', la secuencia ancló estos pedidos como núcleo central y distribuyó los SKUs minoritarios en las colas (extremos) para priorizar inercia ininterrumpida.`);
+        } else {
+            lines.push(`💡 **Estrategia del Optimizador:** Frente a la alta variabilidad del mix, la heurística balanceó intercalando SKUs compatibles metalúrgicamente minimizando las penalidades del costo cruzado (Cross-Changeover penalty).`);
         }
 
         return lines;

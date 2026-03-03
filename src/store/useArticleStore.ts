@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabaseClient';
 interface ArticleStore {
     articlesByProcess: Record<ProcessId, Article[]>;
     loading: boolean;
+    fetchedProcesses: Set<ProcessId>; // Caché: qué procesos ya fueron cargados
 
     // Actions
     fetchArticles: (processId: ProcessId) => Promise<void>;
@@ -15,6 +16,7 @@ interface ArticleStore {
     updateArticle: (processId: ProcessId, id: string, article: Partial<Article>) => Promise<void>;
     deleteArticle: (processId: ProcessId, id: string) => Promise<void>;
     deleteArticles: (processId: ProcessId, ids: string[]) => Promise<void>;
+    invalidateCache: (processId?: ProcessId) => void;
 
     // Legacy support or quick helper
     getArticles: (processId: ProcessId) => Article[];
@@ -68,10 +70,28 @@ const mapToDb = (processId: ProcessId, article: Partial<Article>) => ({
 export const useArticleStore = create<ArticleStore>((set, get) => ({
     articlesByProcess: initialArticlesState,
     loading: false,
+    fetchedProcesses: new Set<ProcessId>(),
 
     getArticles: (processId) => get().articlesByProcess[processId] || [],
 
+    invalidateCache: (processId?) => {
+        if (processId) {
+            set((state) => {
+                const next = new Set(state.fetchedProcesses);
+                next.delete(processId);
+                return { fetchedProcesses: next };
+            });
+        } else {
+            set({ fetchedProcesses: new Set<ProcessId>() });
+        }
+    },
+
     fetchArticles: async (processId) => {
+        // Si ya tenemos los datos en memoria para este proceso, no re-fetch
+        if (get().fetchedProcesses.has(processId) && get().articlesByProcess[processId].length > 0) {
+            return;
+        }
+
         set({ loading: true });
         let allData: any[] = [];
         let from = 0;
@@ -81,7 +101,7 @@ export const useArticleStore = create<ArticleStore>((set, get) => ({
         while (hasMore) {
             const { data, error } = await supabase
                 .from('scheduler_articles')
-                .select('*')
+                .select('id, process_id, sku_laminacion, ending, codigo_programacion, descripcion, sku_palanquilla, calidad_palanquilla, ritmo_th, rendimiento_metalico, fam, acierto_calibracion, id_tabla_cambio_medida, peso_palanquilla, almacen_destino, comentarios') // columnas específicas
                 .eq('process_id', processId)
                 .range(from, from + step - 1);
 
@@ -108,6 +128,7 @@ export const useArticleStore = create<ArticleStore>((set, get) => ({
                 ...state.articlesByProcess,
                 [processId]: articles
             },
+            fetchedProcesses: new Set([...state.fetchedProcesses, processId]),
             loading: false
         }));
     },
@@ -116,7 +137,7 @@ export const useArticleStore = create<ArticleStore>((set, get) => ({
         set({ loading: true });
         const { data, error } = await supabase
             .from('scheduler_articles')
-            .select('*');
+            .select('id, process_id, sku_laminacion, ending, codigo_programacion, descripcion, sku_palanquilla, calidad_palanquilla, ritmo_th, rendimiento_metalico, fam, acierto_calibracion, id_tabla_cambio_medida, peso_palanquilla, almacen_destino, comentarios'); // columnas específicas
 
         if (error) {
             console.error('Error fetching all articles:', error);

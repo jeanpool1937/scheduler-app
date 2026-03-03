@@ -197,10 +197,11 @@ export const useStore = create<AppState>()(
                 'laminador3': createInitialProcessData('laminador3'),
             },
             activeTab: 'scheduler',
+            sequencerIsLoaded: false,
 
             // Global Actions
             setActiveProcess: async (id) => {
-                set({ activeProcessId: id });
+                set({ activeProcessId: id, sequencerIsLoaded: false });
                 // Trigger fetch for other stores when process changes
                 await Promise.all([
                     useArticleStore.getState().fetchArticles(id),
@@ -294,6 +295,54 @@ export const useStore = create<AppState>()(
                     }));
                 }
 
+                // FETCH SEQUENCER DATA (Drafts and Results)
+                const [draftsRes, resultsRes] = await Promise.all([
+                    supabase.from('scheduler_sequencer_draft_items').select('*').eq('process_id', processId),
+                    supabase.from('scheduler_sequencer_results').select('*').eq('process_id', processId)
+                ]);
+
+                if (draftsRes.data || resultsRes.data) {
+                    set((state) => {
+                        const currentConfig = state.processes[processId].sequencerConfig || createInitialProcessData(processId).sequencerConfig!;
+
+                        // Map Draft Items
+                        const draftItems = (draftsRes.data || []).map(d => ({
+                            id: d.id,
+                            skuCode: d.sku_code,
+                            quantity: Number(d.quantity),
+                            ...(d.metadata || {})
+                        }));
+
+                        // Map Scenarios Results
+                        const scenarios = { ...(currentConfig.scenarios || {}) };
+                        (resultsRes.data || []).forEach(r => {
+                            if (scenarios[r.scenario_id]) {
+                                scenarios[r.scenario_id] = {
+                                    ...scenarios[r.scenario_id],
+                                    result: r.result_data,
+                                    status: 'completed',
+                                    progress: 100
+                                };
+                            }
+                        });
+
+                        return {
+                            processes: {
+                                ...state.processes,
+                                [processId]: {
+                                    ...state.processes[processId],
+                                    sequencerConfig: {
+                                        ...currentConfig,
+                                        draftItems,
+                                        scenarios
+                                    }
+                                }
+                            }
+                        };
+                    });
+                }
+
+                set({ sequencerIsLoaded: true });
                 get().recalculateSchedule();
             },
 
@@ -824,6 +873,88 @@ export const useStore = create<AppState>()(
                 }));
                 await supabase.from('scheduler_process_configs').update({ sequencer_config: config }).eq('id', pid);
             },
+
+            saveSequencerDraft: async (draftItems) => {
+                const pid = get().activeProcessId;
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: {
+                            ...state.processes[pid],
+                            sequencerConfig: {
+                                ...state.processes[pid].sequencerConfig!,
+                                draftItems
+                            }
+                        }
+                    }
+                }));
+
+                await supabase.from('scheduler_sequencer_draft_items').delete().eq('process_id', pid);
+                if (draftItems.length > 0) {
+                    const toInsert = draftItems.map(it => {
+                        const { id, skuCode, quantity, ...metadata } = it;
+                        return {
+                            id: id || crypto.randomUUID(),
+                            process_id: pid,
+                            sku_code: skuCode,
+                            quantity: quantity,
+                            metadata: metadata
+                        };
+                    });
+                    await supabase.from('scheduler_sequencer_draft_items').insert(toInsert);
+                }
+            },
+
+            saveSequencerResult: async (scenarioId, result, params) => {
+                const pid = get().activeProcessId;
+                set((state) => {
+                    const pData = state.processes[pid];
+                    const sConfigs = { ...pData.sequencerConfig?.scenarios };
+                    if (sConfigs[scenarioId]) {
+                        sConfigs[scenarioId] = {
+                            ...sConfigs[scenarioId],
+                            result,
+                            status: result ? 'completed' : 'idle',
+                            progress: result ? 100 : 0
+                        };
+                    }
+                    return {
+                        processes: {
+                            ...state.processes,
+                            [pid]: {
+                                ...pData,
+                                sequencerConfig: {
+                                    ...pData.sequencerConfig!,
+                                    scenarios: sConfigs
+                                }
+                            }
+                        }
+                    };
+                });
+
+                if (result) {
+                    const { data: existing } = await supabase.from('scheduler_sequencer_results')
+                        .select('id').eq('process_id', pid).eq('scenario_id', scenarioId).single();
+
+                    if (existing) {
+                        await supabase.from('scheduler_sequencer_results').update({
+                            result_data: result,
+                            params: params
+                        }).eq('id', existing.id);
+                    } else {
+                        await supabase.from('scheduler_sequencer_results').insert({
+                            process_id: pid,
+                            scenario_id: scenarioId,
+                            result_data: result,
+                            params: params
+                        });
+                    }
+                } else {
+                    await supabase.from('scheduler_sequencer_results').delete().eq('process_id', pid).eq('scenario_id', scenarioId);
+                }
+            },
+
+            setSequencerLoaded: (loaded) => set({ sequencerIsLoaded: loaded }),
         }),
         {
             name: 'scheduler-storage',
@@ -832,4 +963,5 @@ export const useStore = create<AppState>()(
                 activeProcessId: state.activeProcessId,
             }),
         }
-    ));
+    )
+);

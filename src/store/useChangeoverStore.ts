@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabaseClient';
 interface ChangeoverStore {
     rulesByProcess: Record<ProcessId, ChangeoverRule[]>;
     loading: boolean;
+    fetchedProcesses: Set<ProcessId>; // Caché: qué procesos ya fueron cargados
 
     // Actions
     fetchRules: (processId: ProcessId) => Promise<void>;
@@ -14,6 +15,7 @@ interface ChangeoverStore {
     addRule: (processId: ProcessId, rule: ChangeoverRule) => Promise<void>;
     updateRule: (processId: ProcessId, id: string, rule: Partial<ChangeoverRule>) => Promise<void>;
     deleteRules: (processId: ProcessId, ids: string[]) => Promise<void>;
+    invalidateCache: (processId?: ProcessId) => void;
 
     // Helper
     getRules: (processId: ProcessId) => ChangeoverRule[];
@@ -42,10 +44,28 @@ const mapToDb = (processId: ProcessId, rule: Partial<ChangeoverRule>) => ({
 export const useChangeoverStore = create<ChangeoverStore>((set, get) => ({
     rulesByProcess: initialRulesState,
     loading: false,
+    fetchedProcesses: new Set<ProcessId>(),
 
     getRules: (processId) => get().rulesByProcess[processId] || [],
 
+    invalidateCache: (processId?) => {
+        if (processId) {
+            set((state) => {
+                const next = new Set(state.fetchedProcesses);
+                next.delete(processId);
+                return { fetchedProcesses: next };
+            });
+        } else {
+            set({ fetchedProcesses: new Set<ProcessId>() });
+        }
+    },
+
     fetchRules: async (processId) => {
+        // Si ya tenemos los datos en memoria para este proceso, no re-fetch
+        if (get().fetchedProcesses.has(processId) && get().rulesByProcess[processId].length > 0) {
+            return;
+        }
+
         set({ loading: true });
         let allData: any[] = [];
         let from = 0;
@@ -55,7 +75,7 @@ export const useChangeoverStore = create<ChangeoverStore>((set, get) => ({
         while (hasMore) {
             const { data, error } = await supabase
                 .from('scheduler_changeover_rules')
-                .select('*')
+                .select('id, process_id, from_id, to_id, duration_hours') // columnas específicas
                 .eq('process_id', processId)
                 .range(from, from + step - 1);
 
@@ -82,6 +102,7 @@ export const useChangeoverStore = create<ChangeoverStore>((set, get) => ({
                 ...state.rulesByProcess,
                 [processId]: rules
             },
+            fetchedProcesses: new Set([...state.fetchedProcesses, processId]),
             loading: false
         }));
     },
@@ -90,7 +111,7 @@ export const useChangeoverStore = create<ChangeoverStore>((set, get) => ({
         set({ loading: true });
         const { data, error } = await supabase
             .from('scheduler_changeover_rules')
-            .select('*');
+            .select('id, process_id, from_id, to_id, duration_hours'); // columnas específicas
 
         if (error) {
             console.error('Error fetching all rules:', error);

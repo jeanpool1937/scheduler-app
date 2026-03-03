@@ -208,6 +208,10 @@ export const ProductionSequencer: React.FC = () => {
     const articles = useArticleStore((state) => state.articlesByProcess[activeProcessId] || []);
     const rules = useChangeoverStore((state) => state.rulesByProcess[activeProcessId] || []);
     const saveSequencerConfig = useStore((state) => state.saveSequencerConfig);
+    const saveSequencerDraft = useStore((state) => state.saveSequencerDraft);
+    const saveSequencerResult = useStore((state) => state.saveSequencerResult);
+    const sequencerIsLoaded = useStore((state) => state.sequencerIsLoaded);
+    const sequencerConfigFromStore = processData.sequencerConfig;
 
     const [draftItems, setDraftItems] = useState<DraftItem[]>([]);
     const [scenarios, setScenarios] = useState<Record<string, import('../types').OptimizationScenario>>({
@@ -244,6 +248,9 @@ export const ProductionSequencer: React.FC = () => {
         tasaElitismo: 0.1
     });
 
+    const hasRestoredRef = useRef(false);
+    const lastRestoredProcessRef = useRef<string | null>(null);
+
     useEffect(() => {
         return () => {
             Object.values(workerRefs.current).forEach(w => w?.terminate());
@@ -264,70 +271,77 @@ export const ProductionSequencer: React.FC = () => {
         fetchSapData();
     }, []);
 
-    // Setup refs for safe restoration
-    const hasRestoredRef = useRef(false);
-    const lastRestoredProcessRef = useRef<string | null>(null);
-
-    // Load saved config when processData is populated from Supabase (avoids race condition)
-    // Only restores ONCE per process change, to avoid interfering with active optimization
-    const sequencerConfigFromStore = processData?.sequencerConfig;
+    // Refresh live stock/sales data whenever sapData arrives or draftItems change their SKU set
+    // Using a stable key so we don't re-run on every minor draft edit, only on new SKU loads
+    const lastRefreshedSkuSetRef = useRef<string>('');
     useEffect(() => {
-        if (!sequencerConfigFromStore) return;
+        if (Object.keys(sapData).length === 0) return; // Wait for SAP data
+        if (draftItems.length === 0) return;            // Nothing to update
 
-        // Solo restaurar si cambiamos de proceso activo (no en cada guardado)
+        // Build a stable key from current SKU set to avoid re-running on quantity/order changes
+        const currentSkuSet = draftItems.map(d => d.skuCode).sort().join(',');
+        if (lastRefreshedSkuSetRef.current === currentSkuSet) return; // Same SKUs, no need to re-enrich
+        lastRefreshedSkuSetRef.current = currentSkuSet;
+
+        setDraftItems(prev => prev.map(item => {
+            const sapItem = sapData[item.skuCode];
+            if (!sapItem) return item; // No SAP data → keep whatever is cached
+            const freshStock = sapItem.stock_fin_mes;
+            const freshVentaDiaria = sapItem.venta_diaria;
+            const freshDiasStock = freshVentaDiaria > 0 ? freshStock / freshVentaDiaria : 999;
+            return {
+                ...item,
+                stockInicial: freshStock,
+                ventaDiaria: freshVentaDiaria,
+                diasStock: freshDiasStock,
+                poMes: sapItem.po_mes_actual,
+            };
+        }));
+    }, [sapData, draftItems]);
+
+    // RESTORE config from store when loaded or process changes
+    useEffect(() => {
+        if (!sequencerIsLoaded || !sequencerConfigFromStore) return;
+
+        // Solo restaurar si cambiamos de proceso activo o si acaba de cargar
         if (lastRestoredProcessRef.current === activeProcessId && hasRestoredRef.current) return;
 
         hasRestoredRef.current = true;
         lastRestoredProcessRef.current = activeProcessId;
 
-        // Apply config explicitly, overriding state completely for the new process
+        // Apply config explicitly
         setDraftItems(sequencerConfigFromStore.draftItems || []);
         if (sequencerConfigFromStore.params) setParams(sequencerConfigFromStore.params);
         if (sequencerConfigFromStore.scenarios) setScenarios(sequencerConfigFromStore.scenarios);
         if (sequencerConfigFromStore.activeScenarioId) setActiveScenarioId(sequencerConfigFromStore.activeScenarioId as any);
-    }, [sequencerConfigFromStore, activeProcessId]);
+    }, [sequencerIsLoaded, sequencerConfigFromStore, activeProcessId]);
 
-    // Refresh live stock/sales data once sapData is available (updates stale cached values)
-    const sapDataRefreshedRef = useRef(false);
-    useEffect(() => {
-        if (Object.keys(sapData).length === 0) return; // Wait for data
-        if (sapDataRefreshedRef.current) return;        // Only once per mount
-        sapDataRefreshedRef.current = true;
-        setDraftItems(prev => {
-            if (prev.length === 0) return prev;
-            return prev.map(item => {
-                const sapItem = sapData[item.skuCode];
-                if (!sapItem) return item; // No SAP data → keep whatever is cached
-                const freshStock = sapItem.stock_fin_mes;
-                const freshVentaDiaria = sapItem.venta_diaria;
-                const freshDiasStock = freshVentaDiaria > 0 ? freshStock / freshVentaDiaria : 999;
-                return {
-                    ...item,
-                    stockInicial: freshStock,
-                    ventaDiaria: freshVentaDiaria,
-                    diasStock: freshDiasStock,
-                    poMes: sapItem.po_mes_actual,
-                };
-            });
-        });
-    }, [sapData]);
-
-    // Save config on changes (debounced)
+    // Save PARAMS & STATUS changes (debounced)
     useEffect(() => {
         const timeout = setTimeout(() => {
-            // Guard against accidental wipes right after switching processing, ensuring state is stable
-            if (!hasRestoredRef.current || activeProcessId !== lastRestoredProcessRef.current) return;
+            if (!hasRestoredRef.current || activeProcessId !== lastRestoredProcessRef.current || !sequencerIsLoaded) return;
 
             saveSequencerConfig({
-                draftItems,
+                draftItems: [], // No longer saving drafts here
                 params,
-                lastResult: activeResult,
-                scenarios,
+                lastResult: null, // No longer saving results here
+                scenarios: Object.fromEntries(
+                    Object.entries(scenarios).map(([k, s]) => [k, { ...s, result: null }]) // Save status but not the big result blob
+                ),
                 activeScenarioId
             });
+        }, 2000);
+        return () => clearTimeout(timeout);
+    }, [params, scenarios, activeScenarioId, saveSequencerConfig, activeProcessId, sequencerIsLoaded]);
+
+    // Save DRAFT ITEMS separately (debounced)
+    useEffect(() => {
+        const timeout = setTimeout(() => {
+            if (!hasRestoredRef.current || activeProcessId !== lastRestoredProcessRef.current || !sequencerIsLoaded) return;
+            saveSequencerDraft(draftItems);
         }, 1500);
         return () => clearTimeout(timeout);
-    }, [draftItems, params, scenarios, activeScenarioId, activeResult, saveSequencerConfig, activeProcessId]);
+    }, [draftItems, saveSequencerDraft, activeProcessId, sequencerIsLoaded]);
 
 
     // ... (rest of state)
@@ -441,6 +455,8 @@ export const ProductionSequencer: React.FC = () => {
                         ...prev,
                         [scenarioId]: { ...prev[scenarioId], status: 'completed', progress: 100, result: workerResult }
                     }));
+                    // SAVE RESULT TO DB immediately on completion
+                    saveSequencerResult(scenarioId, workerResult, params);
                     worker.terminate();
                     workerRefs.current[scenarioId] = null;
                 }
@@ -732,7 +748,13 @@ export const ProductionSequencer: React.FC = () => {
                                 totalTime: activeResult.tiempoProduccionTotal * 24 + activeResult.tiempoTotalCambio,
                                 totalTonnage: activeResult.params_cant.reduce((a: any, b: any) => a + b, 0),
                                 changeovers: activeResult.secuencia.length,
-                                avgChangeoverTime: activeResult.tiempoTotalCambio / activeResult.secuencia.length * 60
+                                avgChangeoverTime: activeResult.tiempoTotalCambio / activeResult.secuencia.length * 60,
+                                skus: activeResult.secuencia.map((it: any) => activeResult.params_skus[it.sku]),
+                                quantities: activeResult.secuencia.map((it: any) => activeResult.params_cant[it.sku]),
+                                changeoverIds: activeResult.secuencia.map((it: any) => {
+                                    const draft = draftItems.find(d => d.id === activeResult.params_ids[it.sku]);
+                                    return draft?.idTablaCambioMedida || 'S/N';
+                                })
                             }}
                             onClose={() => { }}
                         />

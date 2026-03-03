@@ -5,6 +5,7 @@ import { VisualSchedule } from './components/VisualSchedule';
 import { SettingsPanel } from './components/SettingsPanel';
 import { MainLayout } from './components/MainLayout';
 import { KPIDashboard } from './components/KPIDashboard';
+import { PlannerLayout } from './components/planner/PlannerLayout';
 
 import { useStore } from './store/useStore';
 import { useArticleStore } from './store/useArticleStore';
@@ -31,6 +32,7 @@ function App() {
 
   return (
     <MainLayout>
+      {activeTab === 'planner' && <PlannerLayout />}
       {activeTab === 'scheduler' && (
         <>
           <KPIDashboard />

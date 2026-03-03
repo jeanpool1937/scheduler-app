@@ -148,7 +148,7 @@ export interface AppState {
 
   // Actions (global)
   setActiveProcess: (id: ProcessId) => void;
-  setActiveTab: (tab: 'scheduler' | 'visual' | 'database' | 'settings' | 'sequencer') => void;
+  setActiveTab: (tab: 'planner' | 'scheduler' | 'visual' | 'database' | 'settings' | 'sequencer') => void;
   setVisualTargetDate: (date: Date | null) => void;
   fetchProcessData: (processId: ProcessId) => Promise<void>;
 
@@ -195,7 +195,11 @@ export interface AppState {
 
   // Sequencer Config
   saveSequencerConfig: (config: SequencerConfig) => Promise<void>;
+  saveSequencerDraft: (draftItems: any[]) => Promise<void>;
+  saveSequencerResult: (scenarioId: string, result: any, params: any) => Promise<void>;
+  setSequencerLoaded: (loaded: boolean) => void;
 
   // UI State (Global)
-  activeTab: 'scheduler' | 'visual' | 'database' | 'settings' | 'sequencer';
+  activeTab: 'planner' | 'scheduler' | 'visual' | 'database' | 'settings' | 'sequencer';
+  sequencerIsLoaded: boolean;
 }
