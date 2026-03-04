@@ -43,14 +43,14 @@ interface ComparisonProps {
 const Card: React.FC<{ title: string; subtitle?: string; icon: React.ReactNode; children: React.ReactNode }> = ({
   title, subtitle, icon, children
 }) => (
-  <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-    <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-100">
-      <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center text-[#004DB4]">
-        {icon}
+  <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden transition-all hover:shadow-md">
+    <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-100 bg-gray-50/30">
+      <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center text-[#004DB4] shadow-sm border border-blue-100/50">
+        {React.cloneElement(icon as React.ReactElement<any>, { strokeWidth: 1.5 })}
       </div>
       <div>
-        <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
-        {subtitle && <p className="text-xs text-gray-500">{subtitle}</p>}
+        <h3 className="text-sm font-bold text-gray-900 tracking-tight">{title}</h3>
+        {subtitle && <p className="text-[11px] text-gray-500 font-medium">{subtitle}</p>}
       </div>
     </div>
     <div className="p-6">{children}</div>
@@ -134,11 +134,15 @@ const ComparisonDashboard: React.FC<ComparisonProps> = ({
 
   const renderDiff = (cur: number, base: number, lowerIsBetter = true) => {
     if (!base || cur === base) return null;
+    if (cur === 0 && base === 0) return null;
+
     const pct = ((cur - base) / Math.abs(base)) * 100;
+    if (Math.abs(pct) < 0.01) return null;
+
     const better = lowerIsBetter ? cur < base : cur > base;
     return (
-      <span className={`ml-2 inline-flex items-center gap-0.5 text-xs font-semibold px-1.5 py-0.5 rounded-md ${better ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
-        {cur < base ? <ArrowDown size={10} /> : <ArrowUp size={10} />}
+      <span className={`ml-2 inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${better ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-red-50 text-red-700 border-red-100'}`}>
+        {better ? <ArrowDown size={10} strokeWidth={2.5} /> : <ArrowUp size={10} strokeWidth={2.5} />}
         {Math.abs(pct).toFixed(1)}%
       </span>
     );
@@ -308,10 +312,10 @@ const ComparisonDashboard: React.FC<ComparisonProps> = ({
               <tr className="border-b border-gray-200">
                 <th className="pb-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-48">Indicador</th>
                 {metrics.map((m) => (
-                  <th key={m.id} className="pb-3 text-center text-xs font-semibold uppercase tracking-wide" style={{ color: m.color }}>
+                  <th key={m.id} className={`pb-3 text-center text-xs font-bold uppercase tracking-widest ${m.id === 'A' ? 'bg-blue-50/50 rounded-t-lg pt-1' : ''}`} style={{ color: m.color }}>
                     {m.name}
                     {m.id === 'A' && (
-                      <span className="ml-1 text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-bold">BASE</span>
+                      <span className="block text-[9px] text-[#004DB4] opacity-70 font-black mt-0.5">ESCENARIO BASE</span>
                     )}
                   </th>
                 ))}
@@ -319,23 +323,23 @@ const ComparisonDashboard: React.FC<ComparisonProps> = ({
             </thead>
             <tbody className="divide-y divide-gray-100">
               {/* Costo Total */}
-              <tr className="hover:bg-gray-50">
-                <td className="py-3 pr-4">
-                  <div className="flex items-center gap-2">
-                    <div className="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center"><DollarSign size={14} className="text-emerald-600" /></div>
+              <tr className="group hover:bg-gray-50/50 transition-colors">
+                <td className="py-4 pr-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center border border-emerald-100"><DollarSign size={16} strokeWidth={1.5} className="text-emerald-600" /></div>
                     <div>
-                      <span className="block text-xs font-semibold text-gray-800">Costo Total</span>
-                      <span className="block text-[10px] text-gray-400">Objetivo: minimizar</span>
+                      <span className="block text-xs font-bold text-gray-800 tracking-tight">Costo Total</span>
+                      <span className="block text-[10px] text-gray-400 font-medium">Objetivo: minimizar</span>
                     </div>
                   </div>
                 </td>
                 {metrics.map((m) => (
-                  <td key={m.id} className="py-3 text-center">
-                    <span className={`text-base font-bold ${m.cost === minCost ? 'text-emerald-600' : 'text-gray-800'}`}>{fmt$(m.cost)}</span>
+                  <td key={m.id} className={`py-4 text-center transition-all ${m.id === 'A' ? 'bg-blue-50/30' : ''}`}>
+                    <span className={`text-base font-black ${m.cost === minCost && m.cost > 0 ? 'text-emerald-600' : 'text-gray-900'}`}>{fmt$(m.cost)}</span>
                     {m.id !== 'A' && baseMetric && renderDiff(m.cost, baseMetric.cost, true)}
-                    {m.cost === minCost && (
-                      <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                        <CheckCircle2 size={9} /> Mejor
+                    {m.cost === minCost && m.cost > 0 && (
+                      <div className="mt-1 flex items-center justify-center gap-1 text-[9px] font-black text-emerald-600 bg-emerald-100/50 px-2 py-0.5 rounded-full border border-emerald-200/50 w-fit mx-auto">
+                        <CheckCircle2 size={10} strokeWidth={2.5} /> EL MEJOR
                       </div>
                     )}
                   </td>
@@ -343,14 +347,14 @@ const ComparisonDashboard: React.FC<ComparisonProps> = ({
               </tr>
               {/* Sub-costos */}
               {[
-                { icon: <Factory size={12} className="text-gray-400" />, label: 'Fabricación', key: 'productionCost' },
-                { icon: <Clock size={12} className="text-orange-400" />, label: 'Horas Extra', key: 'overtimeCost' },
-                { icon: <Zap size={12} className="text-red-400" />, label: 'Energía Punta', key: 'peakPowerCost' },
+                { icon: <Factory size={12} strokeWidth={1.5} className="text-gray-400" />, label: 'Fabricación', key: 'productionCost' },
+                { icon: <Clock size={12} strokeWidth={1.5} className="text-orange-400" />, label: 'Horas Extra', key: 'overtimeCost' },
+                { icon: <Zap size={12} strokeWidth={1.5} className="text-red-400" />, label: 'Energía Punta', key: 'peakPowerCost' },
               ].map(({ icon, label, key }) => (
                 <tr key={key} className="text-xs">
                   <td className="py-2 pl-9 text-gray-500 flex items-center gap-1.5">{icon}{label}</td>
                   {metrics.map((m) => (
-                    <td key={m.id} className="py-2 text-center font-mono text-gray-600">
+                    <td key={m.id} className={`py-2 text-center font-mono text-gray-600 ${m.id === 'A' ? 'bg-blue-50/30' : ''}`}>
                       {fmt$((m.bkdown as any)[key] || 0)}
                     </td>
                   ))}
@@ -358,19 +362,19 @@ const ComparisonDashboard: React.FC<ComparisonProps> = ({
               ))}
 
               {/* Costo/ton */}
-              <tr className="hover:bg-amber-50/30">
-                <td className="py-3 pr-4">
-                  <div className="flex items-center gap-2">
-                    <div className="w-7 h-7 rounded-lg bg-amber-50 flex items-center justify-center"><TrendingUp size={14} className="text-amber-600" /></div>
+              <tr className="group hover:bg-amber-50/30 transition-colors">
+                <td className="py-4 pr-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-amber-50 flex items-center justify-center border border-amber-100"><TrendingUp size={16} strokeWidth={1.5} className="text-amber-600" /></div>
                     <div>
-                      <span className="block text-xs font-semibold text-gray-800">Costo / Ton</span>
-                      <span className="block text-[10px] text-gray-400">Eficiencia promedio</span>
+                      <span className="block text-xs font-bold text-gray-800 tracking-tight">Costo / Ton</span>
+                      <span className="block text-[10px] text-gray-400 font-medium">Eficiencia promedio</span>
                     </div>
                   </div>
                 </td>
                 {metrics.map((m) => (
-                  <td key={m.id} className="py-3 text-center">
-                    <span className={`text-base font-bold ${m.costPerTon === minCostPerTon && m.costPerTon > 0 ? 'text-amber-600' : 'text-gray-800'}`}>
+                  <td key={m.id} className={`py-4 text-center transition-all ${m.id === 'A' ? 'bg-blue-50/30' : ''}`}>
+                    <span className={`text-base font-black ${m.costPerTon === minCostPerTon && m.costPerTon > 0 ? 'text-amber-600' : 'text-gray-900'}`}>
                       {m.costPerTon > 0 ? `$${m.costPerTon.toFixed(2)}` : '–'}
                     </span>
                     {m.id !== 'A' && baseMetric && renderDiff(m.costPerTon, baseMetric.costPerTon, true)}
@@ -379,20 +383,20 @@ const ComparisonDashboard: React.FC<ComparisonProps> = ({
               </tr>
 
               {/* Producción */}
-              <tr className="hover:bg-gray-50 border-t border-gray-200">
-                <td className="py-3 pr-4">
-                  <div className="flex items-center gap-2">
-                    <div className="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center"><Scale size={14} className="text-blue-600" /></div>
+              <tr className="group hover:bg-gray-50/50 border-t border-gray-100 transition-colors">
+                <td className="py-4 pr-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center border border-blue-100/50"><Scale size={16} strokeWidth={1.5} className="text-[#004DB4]" /></div>
                     <div>
-                      <span className="block text-xs font-semibold text-gray-800">Producción Total</span>
-                      <span className="block text-[10px] text-gray-400">Toneladas procesadas</span>
+                      <span className="block text-xs font-bold text-gray-800 tracking-tight">Producción Total</span>
+                      <span className="block text-[10px] text-gray-400 font-medium">Toneladas procesadas</span>
                     </div>
                   </div>
                 </td>
                 {metrics.map((m) => (
-                  <td key={m.id} className="py-3 text-center">
-                    <span className="text-base font-bold text-gray-800">{fmtTons(m.totalTons)}</span>
-                    <span className="text-[10px] text-gray-400 ml-1">TN</span>
+                  <td key={m.id} className={`py-4 text-center transition-all ${m.id === 'A' ? 'bg-blue-50/30' : ''}`}>
+                    <span className="text-base font-black text-gray-900">{fmtTons(m.totalTons)}</span>
+                    <span className="text-[10px] text-gray-400 font-black ml-1">TN</span>
                     {m.id !== 'A' && baseMetric && renderDiff(m.totalTons, baseMetric.totalTons, false)}
                   </td>
                 ))}
@@ -400,23 +404,25 @@ const ComparisonDashboard: React.FC<ComparisonProps> = ({
 
               {/* Por máquina */}
               {['LAM1', 'LAM2', 'LAM3'].map((mId) => (
-                <tr key={mId} className="text-xs">
+                <tr key={mId} className="text-xs group hover:bg-gray-50/30 transition-colors">
                   <td className="py-2 pl-9">
-                    <span className="inline-block w-2 h-2 rounded-full mr-1.5 align-middle" style={{ backgroundColor: MACHINE_COLORS[mId] }} />
-                    <span className="text-gray-600">{mId}</span>
+                    <span className="inline-block w-2 h-2 rounded-full mr-2 align-middle shadow-sm" style={{ backgroundColor: MACHINE_COLORS[mId] }} />
+                    <span className="text-gray-600 font-medium">{mId}</span>
                   </td>
                   {metrics.map((m) => {
                     const info = m.byMachine[mId];
                     const isHP = info.hours > info.base + 0.1;
                     return (
-                      <td key={m.id} className="py-2 text-center">
-                        <span className="font-mono text-gray-700">{fmtTons(info.tons)} TN</span>
-                        <span className="block text-[10px] text-gray-400">{fmtH(info.hours)}</span>
-                        {isHP && (
-                          <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100">
-                            <Zap size={7} className="fill-amber-500" /> HP
-                          </span>
-                        )}
+                      <td key={m.id} className={`py-2 text-center transition-all ${m.id === 'A' ? 'bg-blue-50/20' : ''}`}>
+                        <div className="flex flex-col items-center">
+                          <span className="font-mono text-gray-700 font-bold">{fmtTons(info.tons)} TN</span>
+                          <span className="text-[10px] text-gray-400 font-medium">{fmtH(info.hours)}</span>
+                          {isHP && (
+                            <span className="mt-1 inline-flex items-center gap-0.5 text-[9px] font-black text-amber-600 bg-amber-100/50 px-1.5 py-0.5 rounded border border-amber-200/50">
+                              <Zap size={8} strokeWidth={2.5} className="fill-amber-500" /> HP
+                            </span>
+                          )}
+                        </div>
                       </td>
                     );
                   })}
@@ -424,24 +430,24 @@ const ComparisonDashboard: React.FC<ComparisonProps> = ({
               ))}
 
               {/* No atendido */}
-              <tr className="hover:bg-red-50/20 border-t border-gray-200">
-                <td className="py-3 pr-4">
-                  <div className="flex items-center gap-2">
-                    <div className="w-7 h-7 rounded-lg bg-red-50 flex items-center justify-center"><AlertTriangle size={14} className="text-red-500" /></div>
+              <tr className="group hover:bg-red-50/10 border-t border-gray-100 transition-colors">
+                <td className="py-4 pr-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center border border-red-100"><AlertTriangle size={16} strokeWidth={1.5} className="text-red-500" /></div>
                     <div>
-                      <span className="block text-xs font-semibold text-gray-800">No Atendido</span>
-                      <span className="block text-[10px] text-gray-400">Demanda sin cubrir</span>
+                      <span className="block text-xs font-bold text-gray-800 tracking-tight">No Atendido</span>
+                      <span className="block text-[10px] text-gray-400 font-medium">Demanda sin cubrir</span>
                     </div>
                   </div>
                 </td>
                 {metrics.map((m) => (
-                  <td key={m.id} className="py-3 text-center">
-                    <span className={`text-base font-bold ${m.unmetTons > 0 ? 'text-red-600' : 'text-gray-400'}`}>
-                      {fmtTons(m.unmetTons)} <span className="text-xs font-normal">TN</span>
+                  <td key={m.id} className={`py-4 text-center transition-all ${m.id === 'A' ? 'bg-blue-50/30' : ''}`}>
+                    <span className={`text-base font-black ${m.unmetTons > 0 ? 'text-red-600' : 'text-gray-400'}`}>
+                      {fmtTons(m.unmetTons)} <span className="text-xs font-black">TN</span>
                     </span>
                     {m.unmetTons === 0 && (
-                      <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                        <CheckCircle2 size={9} /> 100% cubierto
+                      <div className="mt-1 flex items-center justify-center gap-1 text-[9px] font-black text-emerald-600 bg-emerald-100/50 px-2 py-0.5 rounded-full border border-emerald-200/50 w-fit mx-auto">
+                        <CheckCircle2 size={10} strokeWidth={2.5} /> 100% CUBIERTO
                       </div>
                     )}
                   </td>
@@ -457,14 +463,18 @@ const ComparisonDashboard: React.FC<ComparisonProps> = ({
         <Card title="Costos por Máquina" subtitle="Comparativa entre escenarios" icon={<DollarSign size={18} />}>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={costChart} margin={{ top: 4, right: 16, left: 8, bottom: 4 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#6b7280' }} />
-                <YAxis tickFormatter={(v: any) => `$${(v / 1000).toFixed(0)}K`} tick={{ fontSize: 10, fill: '#9ca3af' }} />
-                <Tooltip formatter={(v: any) => fmt$(v)} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
+              <BarChart data={costChart} margin={{ top: 10, right: 10, left: 0, bottom: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#6b7280', fontWeight: 600 }} axisLine={false} tickLine={false} />
+                <YAxis tickFormatter={(v: any) => `$${(v / 1000).toFixed(0)}K`} tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
+                <Tooltip
+                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)', padding: '12px' }}
+                  formatter={(v: any) => [fmt$(v), '']}
+                  cursor={{ fill: '#f9fafb' }}
+                />
+                <Legend wrapperStyle={{ fontSize: 11, fontWeight: 500, paddingTop: '15px' }} iconType="circle" />
                 {activeScenarios.map((s) => (
-                  <Bar key={s.id} dataKey={s.name} fill={s.color} radius={[3, 3, 0, 0]} />
+                  <Bar key={s.id} dataKey={s.name} fill={s.color} radius={[6, 6, 0, 0]} barSize={24} />
                 ))}
               </BarChart>
             </ResponsiveContainer>
