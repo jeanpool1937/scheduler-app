@@ -13,6 +13,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
 
     const getTitle = () => {
         switch (activeTab) {
+            case 'home': return 'Inicio';
             case 'planner': return 'Planificador de Capacidad y Costos';
             case 'scheduler': return 'Programación de Producción';
             case 'sequencer': return 'Optimización de Secuencia';
@@ -30,7 +31,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             <main className="flex-1 overflow-auto transition-all duration-300 relative flex flex-col">
                 <header className="h-16 bg-white border-b border-gray-200 px-6 flex items-center justify-between shrink-0 sticky top-0 z-10">
                     <h1 className="text-xl font-bold text-slate-800">{getTitle()}</h1>
-                    <ProcessSelector />
+                    {activeTab !== 'planner' && activeTab !== 'home' && <ProcessSelector />}
                 </header>
 
                 <div className="flex-1 p-6 overflow-y-auto">

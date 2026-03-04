@@ -8,7 +8,8 @@ import {
     ChevronRight,
     Factory,
     Sparkles,
-    BarChart3
+    BarChart3,
+    Home
 } from 'lucide-react';
 import { useStore } from '../store/useStore';
 
@@ -21,6 +22,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
     const { activeTab, setActiveTab } = useStore();
 
     const menuItems = [
+        { id: 'home', label: 'Inicio', icon: Home },
         { id: 'planner', label: 'Planificador', icon: BarChart3 },
         { id: 'sequencer', label: 'Secuenciador', icon: Sparkles },
         { id: 'scheduler', label: 'Plan Mensual', icon: LayoutDashboard },

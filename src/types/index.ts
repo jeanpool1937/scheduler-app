@@ -20,6 +20,8 @@ export interface StoppageConfig {
 
 export type ProcessId = 'laminador1' | 'laminador2' | 'laminador3';
 
+export type TabId = 'home' | 'planner' | 'scheduler' | 'visual' | 'database' | 'settings' | 'sequencer';
+
 export interface DaySchedule {
   /** Si el día está activo (opera) */
   active: boolean;
@@ -148,7 +150,7 @@ export interface AppState {
 
   // Actions (global)
   setActiveProcess: (id: ProcessId) => void;
-  setActiveTab: (tab: 'planner' | 'scheduler' | 'visual' | 'database' | 'settings' | 'sequencer') => void;
+  setActiveTab: (tab: TabId) => void;
   setVisualTargetDate: (date: Date | null) => void;
   fetchProcessData: (processId: ProcessId) => Promise<void>;
 
@@ -197,9 +199,10 @@ export interface AppState {
   saveSequencerConfig: (config: SequencerConfig) => Promise<void>;
   saveSequencerDraft: (draftItems: any[]) => Promise<void>;
   saveSequencerResult: (scenarioId: string, result: any, params: any) => Promise<void>;
+  importPlannerToSequencer: (processId: ProcessId, draftItems: any[]) => Promise<void>;
   setSequencerLoaded: (loaded: boolean) => void;
 
   // UI State (Global)
-  activeTab: 'planner' | 'scheduler' | 'visual' | 'database' | 'settings' | 'sequencer';
+  activeTab: TabId;
   sequencerIsLoaded: boolean;
 }

@@ -364,7 +364,7 @@ const ResultsPanel: React.FC = () => {
         ? activeResult.monthlyResults.find((m) => m.period === selectedMonth)
         : null;
 
-    const handleSendToSequencer = (month: string) => {
+    const handleSendToSequencer = async (month: string) => {
         if (!filteredMonth) return;
 
         // Group allocations by machine
@@ -378,15 +378,17 @@ const ResultsPanel: React.FC = () => {
         });
 
         // Map LAM1/LAM2/LAM3 to processIds
-        const machineToProcess: Record<string, string> = {
+        const machineToProcess: Record<string, 'laminador1' | 'laminador2' | 'laminador3'> = {
             LAM1: 'laminador1',
             LAM2: 'laminador2',
             LAM3: 'laminador3',
         };
 
-        Object.entries(byMachine).forEach(([machineId, items]) => {
+        const importFn = useStore.getState().importPlannerToSequencer;
+
+        for (const [machineId, items] of Object.entries(byMachine)) {
             const processId = machineToProcess[machineId];
-            if (!processId) return;
+            if (!processId) continue;
 
             const draftItems = items.map((item) => ({
                 id: crypto.randomUUID(),
@@ -394,13 +396,8 @@ const ResultsPanel: React.FC = () => {
                 quantity: item.quantity,
             }));
 
-            // Update sequencer draft items for each process
-            const state = useStore.getState();
-            const currentConfig = state.processes[processId as 'laminador1' | 'laminador2' | 'laminador3']?.sequencerConfig;
-            if (currentConfig) {
-                useStore.getState().saveSequencerDraft(draftItems);
-            }
-        });
+            await importFn(processId, draftItems);
+        }
 
         setSentMonths((prev) => ({ ...prev, [month]: true }));
         setTimeout(() => {

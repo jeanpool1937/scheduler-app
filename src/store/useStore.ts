@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { AppState, ProcessData, ProductionScheduleItem, StoppageConfig, WorkSchedule, ProcessId } from '../types';
+import type { AppState, ProcessData, ProductionScheduleItem, StoppageConfig, WorkSchedule, ProcessId, TabId } from '../types';
 import type { Article } from '../types/article';
 import { useArticleStore } from './useArticleStore';
 import { useChangeoverStore } from './useChangeoverStore';
@@ -196,7 +196,7 @@ export const useStore = create<AppState>()(
                 'laminador2': createInitialProcessData('laminador2'),
                 'laminador3': createInitialProcessData('laminador3'),
             },
-            activeTab: 'scheduler',
+            activeTab: 'home' as TabId,
             sequencerIsLoaded: false,
 
             // Global Actions
@@ -951,6 +951,36 @@ export const useStore = create<AppState>()(
                     }
                 } else {
                     await supabase.from('scheduler_sequencer_results').delete().eq('process_id', pid).eq('scenario_id', scenarioId);
+                }
+            },
+
+            importPlannerToSequencer: async (processId: ProcessId, draftItems: any[]) => {
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [processId]: {
+                            ...state.processes[processId],
+                            sequencerConfig: {
+                                ...state.processes[processId].sequencerConfig!,
+                                draftItems
+                            }
+                        }
+                    }
+                }));
+
+                await supabase.from('scheduler_sequencer_draft_items').delete().eq('process_id', processId);
+                if (draftItems.length > 0) {
+                    const toInsert = draftItems.map(it => {
+                        const { id, skuCode, quantity, ...metadata } = it;
+                        return {
+                            id: id || crypto.randomUUID(),
+                            process_id: processId,
+                            sku_code: skuCode,
+                            quantity: quantity,
+                            metadata: metadata
+                        };
+                    });
+                    await supabase.from('scheduler_sequencer_draft_items').insert(toInsert);
                 }
             },
 
