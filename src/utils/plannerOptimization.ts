@@ -276,6 +276,28 @@ const runMultiPeriodScenario = (
 // ─── Public API ─────────────────────────────────────────────────────────
 
 /**
+ * Normalize a raw period value to YYYY-MM format.
+ */
+const toPeriodStr = (rawPeriod: any): string => {
+    if (!rawPeriod) return '';
+    if (typeof rawPeriod === 'number') {
+        // Excel serial date
+        const date = new Date(Math.round((rawPeriod - 25569) * 86400 * 1000));
+        return date.toISOString().slice(0, 7);
+    }
+    if (rawPeriod instanceof Date) {
+        return rawPeriod.toISOString().slice(0, 7);
+    }
+    const s = String(rawPeriod).trim();
+    // Handles YYYY-MM-DD, YYYY/MM/DD, YYYY-MM, YYYY/MM
+    const match = s.match(/^(\d{4})[\-\/](\d{2})/);
+    if (match) return `${match[1]}-${match[2]}`;
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) return d.toISOString().slice(0, 7);
+    return s;
+};
+
+/**
  * Run the full optimization from parsed Excel-like data.
  * Returns 3 scenarios: Optimal (smart), Maximum Capacity (force_peak), Base Only.
  */
@@ -285,7 +307,9 @@ export const runPlannerOptimization = (
     machineCosts: MachineCost[],
     schedule: PeriodCapacity[]
 ) => {
-    const cleanId = (s: any) => String(s).trim().toUpperCase();
+    console.log(`[PlannerOptimization] maestroCostos: ${maestroCostos.length} registros`);
+
+    const cleanId = (s: any) => String(s ?? '').trim().toUpperCase();
     const getValue = (row: any, ...candidates: string[]) => {
         for (const c of candidates) {
             if (row[c] !== undefined) return row[c];
@@ -301,7 +325,7 @@ export const runPlannerOptimization = (
         data.Demanda.forEach((r: any) => {
             const sku = getValue(r, 'SKU', 'Codigo', 'Cod_Producto', 'Código_Producto', 'Material');
             const desc = getValue(r, 'Descripcion', 'Desc', 'Material', 'Texto_Breve', 'Descripción');
-            if (sku) masterDemand.set(cleanId(sku), String(desc));
+            if (sku) masterDemand.set(cleanId(sku), String(desc ?? ''));
         });
     }
 
@@ -312,25 +336,19 @@ export const runPlannerOptimization = (
         const sku = getValue(r, 'SKU', 'Codigo', 'Cod_Producto', 'Código_Producto', 'Material');
         const qty = getValue(r, 'Demanda', 'Cantidad', 'Qty', 'TN', 'Volumen', 'Tn_Total');
 
-        if (rawPeriod && sku && qty) {
-            let periodStr = String(rawPeriod);
-            if (typeof rawPeriod === 'number') {
-                const date = new Date(Math.round((rawPeriod - 25569) * 86400 * 1000));
-                periodStr = date.toISOString().slice(0, 7);
-            } else if (rawPeriod instanceof Date) {
-                periodStr = rawPeriod.toISOString().slice(0, 7);
-            } else {
-                const d = new Date(rawPeriod);
-                if (!isNaN(d.getTime())) {
-                    periodStr = d.toISOString().slice(0, 7);
-                }
+        if (rawPeriod && sku && qty !== undefined) {
+            const periodStr = toPeriodStr(rawPeriod);
+            const qtyNum = Number(qty);
+            if (periodStr && !isNaN(qtyNum) && qtyNum > 0) {
+                periodData.push({ period: periodStr, sku: cleanId(sku), qty: qtyNum });
             }
-            periodData.push({ period: periodStr, sku: cleanId(sku), qty: Number(qty) });
         }
     });
 
-    // 3. Cost, Time, and Compatibility matrices from Maestro Costos
-    // 3. Cost, Time, and Compatibility matrices from Maestro Costos with fallback to Excel
+    const uniquePeriods = [...new Set(periodData.map(p => p.period))];
+    console.log(`[PlannerOptimization] periodData: ${periodData.length} filas, ${uniquePeriods.length} periodos -> ${uniquePeriods.slice(0, 5).join(', ')}`);
+
+    // 3. Cost, Time, and Compatibility matrices
     const costs: any = {};
     const times: any = {};
     const compat: any = {};
@@ -344,9 +362,9 @@ export const runPlannerOptimization = (
             const sku = cleanId(skuVal);
             if (!target[sku]) target[sku] = {};
             Object.keys(r).forEach((key) => {
-                const cleanKey = cleanId(key);
+                const cleanKey = cleanId(key).replace(/[\s\-]/g, '');
                 const matchedMachine = machineCosts.find(
-                    (m) => cleanId(m.id).replace(/\s/g, '') === cleanKey.replace(/\s/g, '')
+                    (m) => cleanId(m.id).replace(/[\s\-]/g, '') === cleanKey
                 );
                 if (matchedMachine) {
                     target[sku][matchedMachine.id] = Number(r[key]);
@@ -358,27 +376,41 @@ export const runPlannerOptimization = (
     if (maestroCostos && maestroCostos.length > 0) {
         maestroCostos.forEach((c) => {
             const sku = cleanId(c.codigo_sap);
-            const machine = cleanId(c.codigo_lam);
+            // Normalize machine name: 'LAM 1', 'LAM-1', 'LAM1' -> 'LAM1'
+            const machine = cleanId(c.codigo_lam).replace(/[\s\-]/g, '');
 
             if (!costs[sku]) costs[sku] = {};
             if (!times[sku]) times[sku] = {};
             if (!compat[sku]) compat[sku] = {};
 
-            // a) Costos
-            costs[sku][machine] = c.costo_total_lam_sin_cf;
+            // Force numeric conversion (Supabase returns numeric as JS number but guarantee it)
+            const costo = Number(c.costo_total_lam_sin_cf) || 0;
+            const ritmo = Number(c.ritmo_th) || 0;
 
-            // b) Tiempos (Horas por Tonelada) = 1 / Ritmo t/h
-            times[sku][machine] = c.ritmo_th > 0 ? 1 / c.ritmo_th : 0;
+            costs[sku][machine] = costo;
+            times[sku][machine] = ritmo > 0 ? 1 / ritmo : 0;
+            compat[sku][machine] = ritmo > 0 ? 1 : 0;
 
-            // c) Compatibilidad (Implícita si existe un ritmo válido)
-            compat[sku][machine] = c.ritmo_th > 0 ? 1 : 0;
-
-            // Ensure sku is in masterDemand
+            // Enrich masterDemand with descriptions from Maestro Costos
             if (!masterDemand.has(sku) && c.descripcion) {
                 masterDemand.set(sku, String(c.descripcion));
             }
         });
+
+        const costSkuCount = Object.keys(costs).length;
+        console.log(`[PlannerOptimization] Matrices construidas: ${costSkuCount} SKUs con costos`);
+
+        // Log SKU matching quality
+        const demandSkus = new Set(periodData.map(p => p.sku));
+        const matchedCount = [...demandSkus].filter(s => costs[s] && Object.keys(costs[s]).length > 0).length;
+        console.log(`[PlannerOptimization] SKUs demanda: ${demandSkus.size} | con costos en maestro: ${matchedCount}`);
+        if (matchedCount === 0 && demandSkus.size > 0) {
+            const sampleDemand = [...demandSkus].slice(0, 3);
+            const sampleCost = Object.keys(costs).slice(0, 3);
+            console.warn('[PlannerOptimization] ⚠️ CERO matches! Muestra demanda:', sampleDemand, '| Muestra costos:', sampleCost);
+        }
     } else {
+        console.warn('[PlannerOptimization] maestroCostos VACÍO → usando fallback Excel/muestra');
         // Fallback to data from Excel (or Sample Data)
         processMatrix(data.Costos || [], costs);
         processMatrix(data.Tiempos || [], times);
@@ -389,20 +421,25 @@ export const runPlannerOptimization = (
     const resultB = runMultiPeriodScenario('Escenario B (Máxima Capacidad)', periodData, masterDemand, machineCosts, schedule, costs, times, compat, 'force_peak');
     const resultC = runMultiPeriodScenario('Escenario C (Solo Base)', periodData, masterDemand, machineCosts, schedule, costs, times, compat, 'base_only');
 
+    console.log(`[PlannerOptimization] RESULTADO: totalCost=${resultA.totalCost}, allocations=${resultA.allocations.length}, unmet=${resultA.unmetDemand.length}`);
+
     return { resultA, resultB, resultC };
 };
 
 /**
  * Generate sample data for testing the planner without a real Excel file.
+ * Uses REAL SAP codes from scheduler_maestro_costos that exist in the 3 laminators.
  */
 export const getPlannerSampleData = (): PlannerExcelData => {
+    // SKUs reales del Maestro de Costos con datos en LAM1, LAM2 y LAM3
     const skus = [
-        { id: '10001', desc: 'Bobina Acero 3mm', annualQty: 60000 },
-        { id: '10002', desc: 'Bobina Galv 1.5mm', annualQty: 38400 },
-        { id: '10003', desc: 'Lamina Lisa 5mm', annualQty: 18000 },
-        { id: '10004', desc: 'Perfil C 100x50', annualQty: 96000 },
-        { id: '10005', desc: 'Tubo Estructural', annualQty: 25200 },
-        { id: '10006', desc: 'Bobina Pintada Rojo', annualQty: 54000 },
+        { id: '300080', desc: 'REDONDO P/P A36 1 1/2" X 12.00M', annualQty: 60000 },
+        { id: '300082', desc: 'REDONDO P/P SAE 1045 1 1/2" X 12.00M', annualQty: 38400 },
+        { id: '300083', desc: 'REDONDO P/P A36 1 3/4" X 12.00M', annualQty: 28000 },
+        { id: '300085', desc: 'REDONDO P/P SAE 1045 1 3/4" X 12.00M', annualQty: 18000 },
+        { id: '400005', desc: 'BACO A615-GR60 3/8" X 9M', annualQty: 96000 },
+        { id: '405254', desc: 'REDONDO LISO A36 12MM X 12M', annualQty: 54000 },
+        { id: '408574', desc: 'BACO ASTM A615/A706-G60 3/8" X 9M', annualQty: 72000 },
     ];
 
     const periodos: any[] = [];
@@ -422,29 +459,10 @@ export const getPlannerSampleData = (): PlannerExcelData => {
     return {
         Demanda: demanda,
         Periodos: periodos,
-        Tiempos: [
-            { SKU: '10001', LAM1: 0.05, LAM2: 0.04, LAM3: 0.06 },
-            { SKU: '10002', LAM1: 0.03, LAM2: 0.03, LAM3: 0.035 },
-            { SKU: '10003', LAM1: 0.08, LAM2: 0.07, LAM3: 0.09 },
-            { SKU: '10004', LAM1: 0.02, LAM2: 0.015, LAM3: 0.025 },
-            { SKU: '10005', LAM1: 0.06, LAM2: 0.055, LAM3: 0.07 },
-            { SKU: '10006', LAM1: 0.045, LAM2: 0.04, LAM3: 0.05 },
-        ],
-        Compatibilidad: [
-            { SKU: '10001', LAM1: 1, LAM2: 1, LAM3: 1 },
-            { SKU: '10002', LAM1: 1, LAM2: 1, LAM3: 0 },
-            { SKU: '10003', LAM1: 1, LAM2: 1, LAM3: 1 },
-            { SKU: '10004', LAM1: 0, LAM2: 1, LAM3: 1 },
-            { SKU: '10005', LAM1: 1, LAM2: 0, LAM3: 1 },
-            { SKU: '10006', LAM1: 1, LAM2: 1, LAM3: 1 },
-        ],
-        Costos: [
-            { SKU: '10001', LAM1: 15, LAM2: 12, LAM3: 18 },
-            { SKU: '10002', LAM1: 20, LAM2: 18, LAM3: 25 },
-            { SKU: '10003', LAM1: 30, LAM2: 28, LAM3: 35 },
-            { SKU: '10004', LAM1: 10, LAM2: 8, LAM3: 12 },
-            { SKU: '10005', LAM1: 25, LAM2: 22, LAM3: 28 },
-            { SKU: '10006', LAM1: 22, LAM2: 19, LAM3: 24 },
-        ],
+        // Las matrices de costos, tiempos y compatibilidad vienen del Maestro de Costos (Supabase)
+        // No proveer datos hardcodeados para evitar conflictos con SKUs ficticios
+        Tiempos: [],
+        Compatibilidad: [],
+        Costos: [],
     };
 };

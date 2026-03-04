@@ -157,6 +157,11 @@ export const usePlannerStore = create<PlannerState>()(
                 machineCosts: state.machineCosts,
                 capacitySchedule: state.capacitySchedule,
                 activeView: state.activeView,
+                excelData: state.excelData,
+                pasteText: state.pasteText,
+                resultA: state.resultA,
+                resultB: state.resultB,
+                resultC: state.resultC,
             }),
         }
     )

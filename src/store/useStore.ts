@@ -305,26 +305,31 @@ export const useStore = create<AppState>()(
                     set((state) => {
                         const currentConfig = state.processes[processId].sequencerConfig || createInitialProcessData(processId).sequencerConfig!;
 
-                        // Map Draft Items
-                        const draftItems = (draftsRes.data || []).map(d => ({
-                            id: d.id,
-                            skuCode: d.sku_code,
-                            quantity: Number(d.quantity),
-                            ...(d.metadata || {})
-                        }));
+                        // Map Draft Items - Only update if there's data in the DB
+                        let draftItems = currentConfig.draftItems;
+                        if (draftsRes.data && draftsRes.data.length > 0) {
+                            draftItems = draftsRes.data.map(d => ({
+                                id: d.id,
+                                skuCode: d.sku_code,
+                                quantity: Number(d.quantity),
+                                ...(d.metadata || {})
+                            }));
+                        }
 
                         // Map Scenarios Results
                         const scenarios = { ...(currentConfig.scenarios || {}) };
-                        (resultsRes.data || []).forEach(r => {
-                            if (scenarios[r.scenario_id]) {
-                                scenarios[r.scenario_id] = {
-                                    ...scenarios[r.scenario_id],
-                                    result: r.result_data,
-                                    status: 'completed',
-                                    progress: 100
-                                };
-                            }
-                        });
+                        if (resultsRes.data && resultsRes.data.length > 0) {
+                            resultsRes.data.forEach(r => {
+                                if (scenarios[r.scenario_id]) {
+                                    scenarios[r.scenario_id] = {
+                                        ...scenarios[r.scenario_id],
+                                        result: r.result_data,
+                                        status: 'completed',
+                                        progress: 100
+                                    };
+                                }
+                            });
+                        }
 
                         return {
                             processes: {
@@ -991,6 +996,21 @@ export const useStore = create<AppState>()(
             partialize: (state) => ({
                 activeTab: state.activeTab,
                 activeProcessId: state.activeProcessId,
+                processes: Object.fromEntries(
+                    Object.entries(state.processes).map(([id, data]) => [
+                        id,
+                        {
+                            schedule: data.schedule,
+                            sequencerConfig: data.sequencerConfig,
+                            programStartDate: data.programStartDate,
+                            workSchedule: data.workSchedule,
+                            holidays: data.holidays,
+                            manualStops: data.manualStops,
+                            columnLabels: data.columnLabels,
+                            visualTargetDate: data.visualTargetDate
+                        }
+                    ])
+                )
             }),
         }
     )

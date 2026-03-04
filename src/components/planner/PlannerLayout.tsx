@@ -535,12 +535,13 @@ export const PlannerLayout: React.FC = () => {
         fetchSavedState,
         saveState
     } = usePlannerStore();
-    const { costos } = useCostosStore();
+    const { costos, fetchCostos } = useCostosStore();
 
     // Cargar estado desde Supabase al montar el componente
     React.useEffect(() => {
         fetchSavedState();
-    }, [fetchSavedState]);
+        fetchCostos(); // ← Cargar Maestro de Costos para la optimización
+    }, [fetchSavedState, fetchCostos]);
 
     const views = [
         { id: 'config' as const, label: 'Maestro Capacidad', icon: Settings },
