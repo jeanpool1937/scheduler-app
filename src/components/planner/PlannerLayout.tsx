@@ -1,11 +1,10 @@
 import React, { useState, useCallback } from 'react';
 import {
     Settings,
-    UploadCloud,
+
     BarChart3,
     Play,
     DollarSign,
-    AlertTriangle,
     FileSpreadsheet,
     Zap,
     TrendingUp,
@@ -13,23 +12,23 @@ import {
     Check,
     Calendar,
     Loader2,
+    ClipboardList,
 } from 'lucide-react';
-import * as XLSX from 'xlsx';
 import { usePlannerStore } from '../../store/usePlannerStore';
 import { useCostosStore } from '../../store/useCostosStore';
 import { useStore } from '../../store/useStore';
 import { runPlannerOptimization, getPlannerSampleData } from '../../utils/plannerOptimization';
 import type { MachineCost, PeriodCapacity, PlannerExcelData } from '../../types/planner';
-
+import ComparisonDashboard from './ComparisonDashboard';
 // ─── Helpers ────────────────────────────────────────────────────────────
 const formatMoney = (val: number) =>
     val >= 1000000
-        ? `$${(val / 1000000).toFixed(2)}M`
+        ? `$${(val / 1000000).toFixed(2)} M`
         : val >= 1000
-            ? `$${(val / 1000).toFixed(1)}K`
-            : `$${val.toFixed(0)}`;
+            ? `$${(val / 1000).toFixed(1)} K`
+            : `$${val.toFixed(0)} `;
 
-const formatHours = (val: number) => `${val.toFixed(1)}h`;
+const formatHours = (val: number) => `${val.toFixed(1)} h`;
 const formatTons = (val: number) =>
     val >= 1000 ? `${(val / 1000).toFixed(1)}K TN` : `${val.toFixed(0)} TN`;
 
@@ -108,7 +107,7 @@ const ConfigPanel: React.FC = () => {
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     {localCosts.map((cost, idx) => (
-                        <div key={cost.id} className={`rounded-xl border p-4 ${MACHINE_BG[cost.id] || 'bg-gray-50 border-gray-200'}`}>
+                        <div key={cost.id} className={`rounded - xl border p - 4 ${MACHINE_BG[cost.id] || 'bg-gray-50 border-gray-200'} `}>
                             <div className="flex items-center gap-2 mb-3">
                                 <span
                                     className="px-2 py-1 rounded-md text-xs font-bold text-white"
@@ -229,8 +228,8 @@ const ConfigPanel: React.FC = () => {
             <div className="flex justify-end">
                 <button
                     onClick={handleSave}
-                    className={`flex items-center gap-2 px-6 py-3 rounded-xl font-semibold text-white transition-all shadow-lg hover:shadow-xl ${saved ? 'bg-emerald-500' : 'bg-[#004DB4] hover:bg-[#003d94]'
-                        }`}
+                    className={`flex items - center gap - 2 px - 6 py - 3 rounded - xl font - semibold text - white transition - all shadow - lg hover: shadow - xl ${saved ? 'bg-emerald-500' : 'bg-[#004DB4] hover:bg-[#003d94]'
+                        } `}
                 >
                     {saved ? <Check className="w-5 h-5" /> : <Settings className="w-5 h-5" />}
                     {saved ? 'Guardado' : 'Guardar Todo'}
@@ -242,50 +241,63 @@ const ConfigPanel: React.FC = () => {
 
 // ─── Data Upload Panel ──────────────────────────────────────────────────
 const DataPanel: React.FC = () => {
-    const { setExcelData, excelData, fileName } = usePlannerStore();
+    const { setExcelData, excelData, pasteText, setPasteText, saveState } = usePlannerStore();
 
-    const handleFileUpload = useCallback(
-        (e: React.ChangeEvent<HTMLInputElement>) => {
-            const file = e.target.files?.[0];
-            if (!file) return;
+    const handlePasteData = useCallback(
+        (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+            const text = e.target.value;
+            setPasteText(text);
 
-            const reader = new FileReader();
-            reader.onload = (ev) => {
-                try {
-                    const data = ev.target?.result;
-                    const workbook = XLSX.read(data, { type: 'array' });
+            if (!text.trim()) {
+                setExcelData(null, '');
+                return;
+            }
 
-                    const getValue = (sheetName: string) => {
-                        const wbNames = workbook.SheetNames.reduce(
-                            (acc: Record<string, string>, name: string) => {
-                                acc[name.trim().toLowerCase()] = name;
-                                return acc;
-                            },
-                            {}
-                        );
-                        const match = wbNames[sheetName.toLowerCase()];
-                        return match ? XLSX.utils.sheet_to_json(workbook.Sheets[match]) : [];
-                    };
-
-                    const parsed: PlannerExcelData = {
-                        Demanda: getValue('Demanda'),
-                        Periodos: getValue('Periodos'),
-                    };
-
-                    setExcelData(parsed, file.name);
-                } catch (error) {
-                    console.error('Error parsing Excel:', error);
-                    alert('Error al leer el archivo Excel. Verifica el formato.');
+            try {
+                // Parse TSV (Tab-Separated Values)
+                const rows = text.split(/\r?\n/).filter((row) => row.trim() !== '');
+                if (rows.length < 2) {
+                    return; // Wait for more data
                 }
-            };
-            reader.readAsArrayBuffer(file);
+
+                const headers = rows[0].split('\t').map((h) => h.trim());
+                if (headers.length < 2) {
+                    return; // It doesn't look like TSV
+                }
+
+                const parsedData: any[] = [];
+
+                for (let i = 1; i < rows.length; i++) {
+                    const cols = rows[i].split('\t');
+                    if (cols.length === 1 && cols[0].trim() === '') continue;
+
+                    const rowObj: any = {};
+                    for (let j = 0; j < headers.length; j++) {
+                        rowObj[headers[j]] = cols[j] ? cols[j].trim() : '';
+                    }
+                    parsedData.push(rowObj);
+                }
+
+                if (parsedData.length > 0) {
+                    const parsed: PlannerExcelData = {
+                        Demanda: parsedData,
+                        Periodos: parsedData,
+                    };
+                    setExcelData(parsed, 'datos_pegados.tsv');
+                    setTimeout(() => saveState(), 100);
+                }
+            } catch (error) {
+                console.error('Error parsing pasted data:', error);
+            }
         },
-        [setExcelData]
+        [setExcelData, saveState, setPasteText]
     );
 
     const handleLoadSample = () => {
         const sample = getPlannerSampleData();
-        setExcelData(sample, 'datos_muestra.xlsx');
+        setExcelData(sample, 'datos_muestra.tsv');
+        setPasteText('DATOS_DE_MUESTRA_CARGADOS');
+        setTimeout(() => saveState(), 100);
     };
 
     return (
@@ -293,29 +305,29 @@ const DataPanel: React.FC = () => {
             <div className="bg-white rounded-xl border border-gray-200 p-8 shadow-sm">
                 <div className="flex items-center gap-3 mb-6">
                     <div className="w-10 h-10 rounded-lg bg-violet-100 flex items-center justify-center">
-                        <UploadCloud className="w-5 h-5 text-violet-600" />
+                        <ClipboardList className="w-5 h-5 text-violet-600" />
                     </div>
                     <div>
                         <h3 className="text-lg font-semibold text-gray-900">Carga de Datos</h3>
-                        <p className="text-sm text-gray-500">Sube el archivo Excel con Demanda y Periodos. Costos y Tiempos se asumen desde el Maestro BD.</p>
+                        <p className="text-sm text-gray-500">Pega directamente la tabla de Excel (Ctrl+C / Ctrl+V). Costos y Tiempos de las máquinas se asumen desde el Maestro BD.</p>
                     </div>
                 </div>
 
-                <div className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:border-blue-400 transition-colors">
-                    <UploadCloud className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                    <p className="text-gray-500 mb-4">Arrastra un archivo Excel aquí o haz clic para seleccionar</p>
-                    <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2 bg-[#004DB4] text-white rounded-lg hover:bg-[#003d94] transition-colors font-medium text-sm">
-                        <FileSpreadsheet className="w-4 h-4" />
-                        Seleccionar Archivo
-                        <input type="file" accept=".xlsx,.xls" onChange={handleFileUpload} className="hidden" />
-                    </label>
+                <div className="relative">
+                    <textarea
+                        value={pasteText}
+                        onChange={handlePasteData}
+                        placeholder="Pega los datos de la demanda y periodos aquí copiados desde Excel..."
+                        className="w-full h-48 p-4 bg-gray-50 border-2 border-dashed border-gray-300 rounded-xl focus:border-violet-500 focus:ring-2 outline-none resize-y font-mono text-sm text-gray-700 placeholder-gray-400 whitespace-pre"
+                        spellCheck={false}
+                    />
                 </div>
 
-                {excelData && (
+                {excelData && pasteText && (
                     <div className="mt-4 p-3 bg-emerald-50 rounded-lg border border-emerald-200 flex items-center gap-2">
                         <Check className="w-4 h-4 text-emerald-600" />
                         <span className="text-sm text-emerald-700 font-medium">
-                            Archivo cargado: <strong>{fileName}</strong> — {excelData.Periodos.length} registros de demanda detectados.
+                            {excelData.Periodos.length} registros detectados y procesados correctamente.
                         </span>
                     </div>
                 )}
@@ -405,69 +417,14 @@ const ResultsPanel: React.FC = () => {
 
     return (
         <div className="space-y-6">
-            {/* Summary Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {[
-                    { label: 'Escenario A (Óptimo)', result: resultA, color: 'bg-gradient-to-br from-blue-500 to-indigo-600' },
-                    { label: 'Escenario B (Máx. Capacidad)', result: resultB, color: 'bg-gradient-to-br from-violet-500 to-purple-600' },
-                    { label: 'Escenario C (Solo Base)', result: resultC, color: 'bg-gradient-to-br from-amber-500 to-orange-600' },
-                ].map(({ label, result, color }) =>
-                    result ? (
-                        <div key={label} className={`${color} rounded-xl p-5 text-white shadow-lg`}>
-                            <p className="text-sm font-medium opacity-80">{label}</p>
-                            <p className="text-3xl font-bold mt-1">{formatMoney(result.totalCost)}</p>
-                            <div className="mt-3 flex items-center gap-4 text-xs opacity-80">
-                                <span>Prod: {formatMoney(result.breakdown.productionCost)}</span>
-                                <span>OT: {formatMoney(result.breakdown.overtimeCost)}</span>
-                            </div>
-                            {result.unmetDemand.length > 0 && (
-                                <div className="mt-2 flex items-center gap-1 text-xs bg-white/20 px-2 py-1 rounded-lg">
-                                    <AlertTriangle className="w-3 h-3" />
-                                    {result.unmetDemand.length} SKU sin cubrir
-                                </div>
-                            )}
-                        </div>
-                    ) : null
-                )}
-            </div>
-
-            {/* Machine Usage Overview */}
-            <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Uso de Capacidad Anual</h3>
-                <div className="grid grid-cols-3 gap-4">
-                    {Object.entries(activeResult.machineUsage).map(([machine, usage]) => {
-                        const cap = activeResult.totalCapacity[machine] || 1;
-                        const pct = Math.min((usage / cap) * 100, 100);
-                        return (
-                            <div key={machine} className={`rounded-xl border p-4 ${MACHINE_BG[machine] || ''}`}>
-                                <div className="flex items-center justify-between mb-2">
-                                    <span
-                                        className="px-2 py-0.5 rounded text-xs font-bold text-white"
-                                        style={{ backgroundColor: MACHINE_COLORS[machine] }}
-                                    >
-                                        {machine}
-                                    </span>
-                                    <span className="text-sm font-semibold text-gray-700">{pct.toFixed(1)}%</span>
-                                </div>
-                                <div className="w-full bg-gray-200 rounded-full h-2.5">
-                                    <div
-                                        className="h-2.5 rounded-full transition-all duration-700"
-                                        style={{
-                                            width: `${pct}%`,
-                                            backgroundColor: MACHINE_COLORS[machine],
-                                        }}
-                                    />
-                                </div>
-                                <div className="flex justify-between text-xs text-gray-500 mt-1">
-                                    <span>{formatHours(usage)}</span>
-                                    <span>de {formatHours(cap)}</span>
-                                </div>
-                            </div>
-                        );
-                    })}
-                </div>
-            </div>
-
+            <ComparisonDashboard
+                resultA={resultA}
+                resultB={resultB}
+                resultC={resultC}
+                nameA="Óptimo (Económico)"
+                nameB="Máx Capacidad"
+                nameC="Tradicional"
+            />
             {/* Month Selector + Transfer */}
             <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
                 <div className="flex items-center justify-between mb-4">
@@ -487,10 +444,10 @@ const ResultsPanel: React.FC = () => {
                         <button
                             key={m}
                             onClick={() => setSelectedMonth(m)}
-                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${selectedMonth === m
-                                ? 'bg-[#004DB4] text-white shadow-md'
-                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                                }`}
+                            className={`px - 4 py - 2 rounded - lg text - sm font - medium transition - all ${selectedMonth === m
+                                    ? 'bg-[#004DB4] text-white shadow-md'
+                                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                } `}
                         >
                             {m}
                         </button>
@@ -539,10 +496,10 @@ const ResultsPanel: React.FC = () => {
                             <button
                                 onClick={() => handleSendToSequencer(selectedMonth!)}
                                 disabled={!!sentMonths[selectedMonth!]}
-                                className={`flex items-center gap-2 px-6 py-3 rounded-xl font-semibold text-white transition-all shadow-lg hover:shadow-xl ${sentMonths[selectedMonth!]
-                                    ? 'bg-emerald-500 cursor-default'
-                                    : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700'
-                                    }`}
+                                className={`flex items - center gap - 2 px - 6 py - 3 rounded - xl font - semibold text - white transition - all shadow - lg hover: shadow - xl ${sentMonths[selectedMonth!]
+                                        ? 'bg-emerald-500 cursor-default'
+                                        : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700'
+                                    } `}
                             >
                                 {sentMonths[selectedMonth!] ? (
                                     <>
@@ -560,7 +517,7 @@ const ResultsPanel: React.FC = () => {
                     </div>
                 )}
             </div>
-        </div>
+        </div >
     );
 };
 
@@ -570,13 +527,20 @@ export const PlannerLayout: React.FC = () => {
         activeView,
         setActiveView,
         excelData,
-        machineCosts,
-        capacitySchedule,
-        setResults,
         isOptimizing,
         setIsOptimizing,
+        setResults,
+        machineCosts,
+        capacitySchedule,
+        fetchSavedState,
+        saveState
     } = usePlannerStore();
     const { costos } = useCostosStore();
+
+    // Cargar estado desde Supabase al montar el componente
+    React.useEffect(() => {
+        fetchSavedState();
+    }, [fetchSavedState]);
 
     const views = [
         { id: 'config' as const, label: 'Maestro Capacidad', icon: Settings },
@@ -603,9 +567,13 @@ export const PlannerLayout: React.FC = () => {
                 );
                 console.log('Optimizaci\u00f3n terminada', { resultA });
                 setResults(resultA, resultB, resultC);
+                // Auto-guardado de resultados LP en BD
+                setTimeout(() => {
+                    saveState();
+                }, 500);
             } catch (err: any) {
                 console.error('Optimization error:', err);
-                alert(`Error en la optimizaci\u00f3n: ${err.message}`);
+                alert(`Error en la optimizaci\u00f3n: ${err.message} `);
             } finally {
                 setIsOptimizing(false);
             }
@@ -621,10 +589,10 @@ export const PlannerLayout: React.FC = () => {
                         <button
                             key={v.id}
                             onClick={() => setActiveView(v.id)}
-                            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${activeView === v.id
-                                ? 'bg-[#004DB4] text-white shadow-md'
-                                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-                                }`}
+                            className={`flex items - center gap - 2 px - 4 py - 2.5 rounded - lg text - sm font - medium transition - all ${activeView === v.id
+                                    ? 'bg-[#004DB4] text-white shadow-md'
+                                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                                } `}
                         >
                             <v.icon className="w-4 h-4" />
                             {v.label}
@@ -635,12 +603,12 @@ export const PlannerLayout: React.FC = () => {
                 <button
                     onClick={handleOptimize}
                     disabled={isOptimizing || !excelData}
-                    className={`flex items-center gap-2 px-6 py-3 rounded-xl font-semibold text-white shadow-lg hover:shadow-xl transition-all ${isOptimizing
-                        ? 'bg-gray-400 cursor-wait'
-                        : excelData
-                            ? 'bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600'
-                            : 'bg-gray-300 cursor-not-allowed'
-                        }`}
+                    className={`flex items - center gap - 2 px - 6 py - 3 rounded - xl font - semibold text - white shadow - lg hover: shadow - xl transition - all ${isOptimizing
+                            ? 'bg-gray-400 cursor-wait'
+                            : excelData
+                                ? 'bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600'
+                                : 'bg-gray-300 cursor-not-allowed'
+                        } `}
                 >
                     {isOptimizing ? (
                         <>

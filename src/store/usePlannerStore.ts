@@ -10,6 +10,7 @@ import type {
     PlannerOptimizationResult,
     PlannerExcelData,
 } from '../types/planner';
+import { supabase } from '../lib/supabaseClient';
 
 interface PlannerState {
     // Configuration
@@ -18,6 +19,7 @@ interface PlannerState {
 
     // Data
     excelData: PlannerExcelData | null;
+    pasteText: string;
     fileName: string;
 
     // Results
@@ -33,7 +35,7 @@ interface PlannerState {
     // Actions
     setMachineCosts: (costs: MachineCost[]) => void;
     setCapacitySchedule: (schedule: PeriodCapacity[]) => void;
-    setExcelData: (data: PlannerExcelData, fileName: string) => void;
+    setExcelData: (data: PlannerExcelData | null, fileName: string) => void;
     setResults: (
         a: PlannerOptimizationResult | null,
         b: PlannerOptimizationResult | null,
@@ -43,6 +45,9 @@ interface PlannerState {
     setSelectedMonth: (month: string | null) => void;
     setIsOptimizing: (val: boolean) => void;
     clearResults: () => void;
+    setPasteText: (text: string) => void;
+    fetchSavedState: () => Promise<void>;
+    saveState: () => Promise<void>;
 }
 
 const DEFAULT_COSTS: MachineCost[] = [
@@ -68,11 +73,12 @@ const DEFAULT_CAPACITY_SCHEDULE: PeriodCapacity[] = [
 
 export const usePlannerStore = create<PlannerState>()(
     persist(
-        (set) => ({
+        (set, get) => ({
             machineCosts: DEFAULT_COSTS,
             capacitySchedule: DEFAULT_CAPACITY_SCHEDULE,
-            excelData: null,
             fileName: '',
+            pasteText: '',
+            excelData: null,
             resultA: null,
             resultB: null,
             resultC: null,
@@ -88,6 +94,62 @@ export const usePlannerStore = create<PlannerState>()(
             setSelectedMonth: (month) => set({ selectedMonth: month }),
             setIsOptimizing: (val) => set({ isOptimizing: val }),
             clearResults: () => set({ resultA: null, resultB: null, resultC: null }),
+            setPasteText: (text) => set({ pasteText: text }),
+
+            fetchSavedState: async () => {
+                try {
+                    const { data, error } = await supabase
+                        .from('scheduler_planner_state')
+                        .select('*')
+                        .eq('id', 1)
+                        .single();
+
+                    if (error && error.code !== 'PGRST116') {
+                        console.error('Error fetching planner state:', error);
+                        return;
+                    }
+
+                    if (data) {
+                        set({
+                            pasteText: data.raw_tsv_data || '',
+                            excelData: data.parsed_data as PlannerExcelData | null,
+                            resultA: data.results_a as PlannerOptimizationResult | null,
+                            resultB: data.results_b as PlannerOptimizationResult | null,
+                            resultC: data.results_c as PlannerOptimizationResult | null,
+                            // If there are results, let the user see them
+                            activeView: data.results_a ? 'results' : 'data'
+                        });
+                    }
+                } catch (err) {
+                    console.error('Exception fetching planner state', err);
+                }
+            },
+
+            saveState: async () => {
+                try {
+                    const { pasteText, excelData, resultA, resultB, resultC } = get();
+                    const { error } = await supabase
+                        .from('scheduler_planner_state')
+                        .upsert(
+                            {
+                                id: 1,
+                                raw_tsv_data: pasteText,
+                                parsed_data: excelData,
+                                results_a: resultA,
+                                results_b: resultB,
+                                results_c: resultC,
+                                updated_at: new Date().toISOString()
+                            },
+                            { onConflict: 'id' }
+                        );
+
+                    if (error) {
+                        console.error('Error saving planner state to Supabase:', error);
+                    }
+                } catch (err) {
+                    console.error('Exception saving planner state to Supabase', err);
+                }
+            },
         }),
         {
             name: 'planner-store',
