@@ -445,8 +445,8 @@ const ResultsPanel: React.FC = () => {
                             key={m}
                             onClick={() => setSelectedMonth(m)}
                             className={`px - 4 py - 2 rounded - lg text - sm font - medium transition - all ${selectedMonth === m
-                                    ? 'bg-[#004DB4] text-white shadow-md'
-                                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                ? 'bg-[#004DB4] text-white shadow-md'
+                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                                 } `}
                         >
                             {m}
@@ -497,8 +497,8 @@ const ResultsPanel: React.FC = () => {
                                 onClick={() => handleSendToSequencer(selectedMonth!)}
                                 disabled={!!sentMonths[selectedMonth!]}
                                 className={`flex items - center gap - 2 px - 6 py - 3 rounded - xl font - semibold text - white transition - all shadow - lg hover: shadow - xl ${sentMonths[selectedMonth!]
-                                        ? 'bg-emerald-500 cursor-default'
-                                        : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700'
+                                    ? 'bg-emerald-500 cursor-default'
+                                    : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700'
                                     } `}
                             >
                                 {sentMonths[selectedMonth!] ? (
@@ -582,46 +582,61 @@ export const PlannerLayout: React.FC = () => {
 
     return (
         <div className="space-y-6">
-            {/* Tab Selector + Optimize Button */}
-            <div className="flex items-center justify-between">
-                <div className="flex items-center bg-white border border-gray-200 rounded-xl p-1 shadow-sm">
-                    {views.map((v) => (
-                        <button
-                            key={v.id}
-                            onClick={() => setActiveView(v.id)}
-                            className={`flex items - center gap - 2 px - 4 py - 2.5 rounded - lg text - sm font - medium transition - all ${activeView === v.id
-                                    ? 'bg-[#004DB4] text-white shadow-md'
-                                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-                                } `}
-                        >
-                            <v.icon className="w-4 h-4" />
-                            {v.label}
-                        </button>
-                    ))}
+            {/* ─── Premium Header (Tabs + Action) ────────────────────────────────── */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white/50 backdrop-blur-sm p-2 rounded-2xl border border-gray-100 shadow-sm">
+                <div className="flex items-center bg-gray-100/50 p-1.5 rounded-xl border border-gray-200/50">
+                    {views.map((v) => {
+                        const Icon = v.icon;
+                        return (
+                            <button
+                                key={v.id}
+                                onClick={() => setActiveView(v.id)}
+                                className={`flex items-center gap-2.5 px-5 py-2.5 rounded-lg text-sm font-bold transition-all duration-300 ${activeView === v.id
+                                    ? 'bg-[#004DB4] text-white shadow-lg shadow-blue-900/10'
+                                    : 'text-gray-500 hover:text-gray-900 hover:bg-white'
+                                    }`}
+                            >
+                                <Icon className={`w-4 h-4 transition-transform ${activeView === v.id ? 'scale-110' : ''}`} strokeWidth={activeView === v.id ? 2.5 : 2} />
+                                {v.label}
+                            </button>
+                        );
+                    })}
                 </div>
 
-                <button
-                    onClick={handleOptimize}
-                    disabled={isOptimizing || !excelData}
-                    className={`flex items - center gap - 2 px - 6 py - 3 rounded - xl font - semibold text - white shadow - lg hover: shadow - xl transition - all ${isOptimizing
+                <div className="flex items-center gap-3">
+                    {excelData && !isOptimizing && (
+                        <div className="hidden md:flex flex-col items-end px-2">
+                            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Estado</span>
+                            <span className="text-xs font-bold text-emerald-600 flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Listo para optimizar
+                            </span>
+                        </div>
+                    )}
+                    <button
+                        onClick={handleOptimize}
+                        disabled={isOptimizing || !excelData}
+                        className={`group relative overflow-hidden flex items-center gap-3 px-8 py-3 rounded-xl font-black text-sm text-white transition-all shadow-xl hover:shadow-2xl active:scale-95 ${isOptimizing
                             ? 'bg-gray-400 cursor-wait'
                             : excelData
-                                ? 'bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600'
-                                : 'bg-gray-300 cursor-not-allowed'
-                        } `}
-                >
-                    {isOptimizing ? (
-                        <>
-                            <Loader2 className="w-5 h-5 animate-spin" />
-                            Optimizando...
-                        </>
-                    ) : (
-                        <>
-                            <Play className="w-5 h-5" />
-                            Optimizar
-                        </>
-                    )}
-                </button>
+                                ? 'bg-gradient-to-r from-[#004DB4] to-indigo-700 hover:from-[#003d94] hover:to-indigo-800'
+                                : 'bg-gray-300 cursor-not-allowed opacity-50'
+                            }`}
+                    >
+                        {isOptimizing ? (
+                            <>
+                                <Loader2 className="w-5 h-5 animate-spin" strokeWidth={3} />
+                                <span className="tracking-tight">PROCESANDO...</span>
+                            </>
+                        ) : (
+                            <>
+                                <Play className={`w-5 h-5 transition-transform group-hover:scale-125 ${excelData ? 'text-emerald-300' : ''}`} fill="currentColor" />
+                                <span className="tracking-tight uppercase">Ejecutar Optimización</span>
+                            </>
+                        )}
+                        {/* Interactive light effect on hover */}
+                        <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </button>
+                </div>
             </div>
 
             {/* Content */}

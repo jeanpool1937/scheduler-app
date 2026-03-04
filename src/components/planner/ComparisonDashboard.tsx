@@ -4,30 +4,26 @@ import {
 } from 'recharts';
 import type { PlannerOptimizationResult } from '../../types/planner';
 import {
-  AlertTriangle, DollarSign, TrendingUp, Scale, CheckCircle2,
+  AlertTriangle, TrendingUp, Scale, CheckCircle2,
   ArrowDown, ArrowUp, Table2, ArrowRightLeft, Zap,
-  Clock, Factory, Filter, FileSpreadsheet, Calendar
+  Clock, FileSpreadsheet,
+  Trophy, ChevronRight, BarChart3
 } from 'lucide-react';
 
 // ─── Design tokens (same as PlannerLayout) ──────────────────────────────────
+const SCENARIO_COLORS = ['#004DB4', '#8b5cf6', '#f59e0b'];
 const MACHINE_COLORS: Record<string, string> = {
   LAM1: '#6366f1',
   LAM2: '#8b5cf6',
   LAM3: '#f59e0b',
 };
 
-
-// ─── Scenario palette ────────────────────────────────────────────────────────
-const SCENARIO_COLORS = ['#004DB4', '#8b5cf6', '#f59e0b'];
-
 // ─── Helpers ────────────────────────────────────────────────────────────────
+const fmtTons = (v: number) => v.toLocaleString('es-PE', { maximumFractionDigits: 0 });
 const fmt$ = (v: number) =>
   v >= 1_000_000 ? `$${(v / 1_000_000).toFixed(2)} M`
     : v >= 1_000 ? `$${(v / 1_000).toFixed(1)} K`
       : `$${v.toFixed(0)}`;
-
-const fmtTons = (v: number) => v.toLocaleString('es-PE', { maximumFractionDigits: 0 });
-const fmtH = (v: number) => `${v.toFixed(1)} h`;
 
 // ─── Props ──────────────────────────────────────────────────────────────────
 interface ComparisonProps {
@@ -39,18 +35,18 @@ interface ComparisonProps {
   nameC?: string;
 }
 
-// ─── Sección card ────────────────────────────────────────────────────────────
-const Card: React.FC<{ title: string; subtitle?: string; icon: React.ReactNode; children: React.ReactNode }> = ({
-  title, subtitle, icon, children
+// ─── New Premium Card Component ──────────────────────────────────────────────
+const PremiumCard: React.FC<{ title: string; subtitle?: string; icon: React.ReactNode; children: React.ReactNode; className?: string }> = ({
+  title, subtitle, icon, children, className = ""
 }) => (
-  <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden transition-all hover:shadow-md">
-    <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-100 bg-gray-50/30">
-      <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center text-[#004DB4] shadow-sm border border-blue-100/50">
-        {React.cloneElement(icon as React.ReactElement<any>, { strokeWidth: 1.5 })}
+  <div className={`bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden transition-all hover:shadow-md ${className}`}>
+    <div className="flex items-center gap-3 px-6 py-5 border-b border-gray-50 bg-gray-50/20">
+      <div className="w-10 h-10 rounded-xl bg-white shadow-sm border border-gray-100 flex items-center justify-center text-[#004DB4]">
+        {React.cloneElement(icon as React.ReactElement<any>, { size: 20, strokeWidth: 1.5 })}
       </div>
       <div>
         <h3 className="text-sm font-bold text-gray-900 tracking-tight">{title}</h3>
-        {subtitle && <p className="text-[11px] text-gray-500 font-medium">{subtitle}</p>}
+        {subtitle && <p className="text-[11px] text-gray-400 font-medium uppercase tracking-wider">{subtitle}</p>}
       </div>
     </div>
     <div className="p-6">{children}</div>
@@ -83,7 +79,7 @@ const ComparisonDashboard: React.FC<ComparisonProps> = ({
 
   if (activeScenarios.length < 1) return null;
 
-  // ── Métricas por escenario (filtradas por periodo) ──────────────────────
+  // ── Métricas por escenario ──────────────────────────────────────────────
   const metrics = activeScenarios.map((s) => {
     const r = s.data!;
     let allocs = r.allocations;
@@ -129,417 +125,313 @@ const ComparisonDashboard: React.FC<ComparisonProps> = ({
   });
 
   const minCost = Math.min(...metrics.map((m) => m.cost));
-  const minCostPerTon = Math.min(...metrics.filter((m) => m.costPerTon > 0).map((m) => m.costPerTon));
+  const winner = metrics.find(m => m.cost === minCost);
   const baseMetric = metrics.find((m) => m.id === 'A');
 
   const renderDiff = (cur: number, base: number, lowerIsBetter = true) => {
     if (!base || cur === base) return null;
-    if (cur === 0 && base === 0) return null;
-
     const pct = ((cur - base) / Math.abs(base)) * 100;
     if (Math.abs(pct) < 0.01) return null;
-
     const better = lowerIsBetter ? cur < base : cur > base;
     return (
-      <span className={`ml-2 inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${better ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-red-50 text-red-700 border-red-100'}`}>
-        {better ? <ArrowDown size={10} strokeWidth={2.5} /> : <ArrowUp size={10} strokeWidth={2.5} />}
+      <span className={`inline-flex items-center gap-0.5 text-[10px] font-bold px-2 py-0.5 rounded-full border ${better ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-red-50 text-red-700 border-red-100'}`}>
+        {better ? <ArrowDown size={10} strokeWidth={3} /> : <ArrowUp size={10} strokeWidth={3} />}
         {Math.abs(pct).toFixed(1)}%
       </span>
     );
   };
 
-  // ── Chart data ──────────────────────────────────────────────────────────
-  const machineIds = ['LAM1', 'LAM2', 'LAM3'];
-  const costChart = machineIds.map((m) => {
-    const row: Record<string, any> = { name: m };
-    activeScenarios.forEach((s) => {
-      row[s.name] = metrics.find((x) => x.id === s.id)?.byMachine[m]?.cost ?? 0;
-    });
-    return row;
-  });
-  const tonsChart = machineIds.map((m) => {
-    const row: Record<string, any> = { name: m };
-    activeScenarios.forEach((s) => {
-      row[s.name] = metrics.find((x) => x.id === s.id)?.byMachine[m]?.tons ?? 0;
-    });
-    return row;
-  });
-
-  // ── Pivot table (SKU desplazamientos) ───────────────────────────────────
-  const affectedSkuIds = useMemo(() => {
-    const baseS = activeScenarios.find((s) => s.id === baseId);
-    const targetS = activeScenarios.find((s) => s.id === targetId);
-    if (!baseS || !targetS || baseId === targetId) return new Set<string>();
-    const diffs = new Set<string>();
-    const mapA = new Map<string, string>();
-    baseS.data!.allocations.forEach((a: any) => mapA.set(`${a.period}::${a.skuId}`, a.machineId));
-    const mapB = new Map<string, string>();
-    targetS.data!.allocations.forEach((b: any) => {
-      mapB.set(`${b.period}::${b.skuId}`, b.machineId);
-      const machA = mapA.get(`${b.period}::${b.skuId}`);
-      if (!machA || machA !== b.machineId) diffs.add(b.skuId);
-    });
-    baseS.data!.allocations.forEach((a: any) => {
-      if (!mapB.has(`${a.period}::${a.skuId}`)) diffs.add(a.skuId);
-    });
-    return diffs;
-  }, [baseId, targetId, resultA, resultB, resultC]);
-
-  const buildPivot = (data: PlannerOptimizationResult) => {
-    const periods = Array.from(new Set(data.allocations.map((a: any) => a.period))).sort() as string[];
-    const pivot: Record<string, { desc: string; machines: Record<string, Record<string, number>>; row: Record<string, number> }> = {};
-    data.allocations
-      .filter((a: any) => affectedSkuIds.has(a.skuId))
-      .forEach((a: any) => {
-        if (!pivot[a.skuId]) pivot[a.skuId] = { desc: a.skuDesc, machines: {}, row: {} };
-        pivot[a.skuId].machines[a.machineId] = pivot[a.skuId].machines[a.machineId] || {};
-        pivot[a.skuId].machines[a.machineId][a.period] = (pivot[a.skuId].machines[a.machineId][a.period] || 0) + a.quantity;
-        pivot[a.skuId].row[a.period] = (pivot[a.skuId].row[a.period] || 0) + a.quantity;
-      });
-    return { periods, pivot };
-  };
-
-  const renderPivotTable = (scenId: string, label: string, accentColor: string) => {
-    const sc = activeScenarios.find((s) => s.id === scenId);
-    if (!sc || affectedSkuIds.size === 0) return null;
-    const { periods, pivot } = buildPivot(sc.data!);
-    const skuIds = Object.keys(pivot).sort();
-    if (!skuIds.length) return (
-      <div className="py-8 text-center text-sm text-gray-400">Sin cambios de asignación</div>
-    );
-    return (
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100" style={{ borderLeftWidth: 3, borderLeftColor: accentColor }}>
-          <div className="flex items-center gap-2">
-            <FileSpreadsheet size={15} style={{ color: accentColor }} />
-            <span className="text-sm font-semibold text-gray-800">{label}</span>
-          </div>
-          <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">{skuIds.length} SKUs con cambios</span>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-right text-xs border-collapse">
-            <thead>
-              <tr className="bg-gray-50 text-gray-500">
-                <th className="p-2 text-left font-semibold min-w-[180px] sticky left-0 bg-gray-50 border-r border-gray-200">Etiqueta de fila</th>
-                {periods.map((p) => <th key={p} className="p-2 font-semibold min-w-[56px] whitespace-nowrap">{p}</th>)}
-                <th className="p-2 font-bold bg-gray-100 text-gray-700 min-w-[70px]">Total</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {skuIds.map((skuId) => {
-                const d = pivot[skuId];
-                const machines = Object.keys(d.machines).sort();
-                const skuTotal = periods.reduce((s, p) => s + (d.row[p] || 0), 0);
-                return (
-                  <React.Fragment key={skuId}>
-                    <tr className="font-semibold text-gray-800 bg-blue-50/40">
-                      <td className="p-2 text-left sticky left-0 bg-blue-50/40 border-r border-blue-100">
-                        <span className="block text-xs font-bold">{skuId}</span>
-                        <span className="block text-[10px] font-normal text-gray-500 truncate max-w-[160px]" title={d.desc}>{d.desc}</span>
-                      </td>
-                      {periods.map((p) => <td key={p} className="p-2">{d.row[p] ? fmtTons(d.row[p]) : ''}</td>)}
-                      <td className="p-2 bg-blue-100/30 font-bold">{fmtTons(skuTotal)}</td>
-                    </tr>
-                    {machines.map((mId) => {
-                      const mData = d.machines[mId];
-                      const mTotal = periods.reduce((s, p) => s + (mData[p] || 0), 0);
-                      return (
-                        <tr key={`${skuId}-${mId}`} className="text-gray-500 hover:bg-gray-50">
-                          <td className="p-2 text-left pl-5 sticky left-0 bg-white border-r border-gray-100">
-                            <span className="inline-block w-2 h-2 rounded-full mr-1.5" style={{ backgroundColor: MACHINE_COLORS[mId] || '#9ca3af' }} />
-                            {mId}
-                          </td>
-                          {periods.map((p) => <td key={p} className="p-2 font-mono">{mData[p] ? fmtTons(mData[p]) : ''}</td>)}
-                          <td className="p-2 font-medium">{fmtTons(mTotal)}</td>
-                        </tr>
-                      );
-                    })}
-                  </React.Fragment>
-                );
-              })}
-              <tr className="font-bold text-white text-xs" style={{ backgroundColor: '#004DB4' }}>
-                <td className="p-2.5 text-left sticky left-0" style={{ backgroundColor: '#004DB4' }}>Total general</td>
-                {periods.map((p) => {
-                  const col = skuIds.reduce((s, sku) => s + (pivot[sku].row[p] || 0), 0);
-                  return <td key={p} className="p-2.5">{fmtTons(col)}</td>;
-                })}
-                <td className="p-2.5" style={{ backgroundColor: '#003899' }}>
-                  {fmtTons(skuIds.reduce((s, sku) => s + periods.reduce((s2, p) => s2 + (pivot[sku].row[p] || 0), 0), 0))}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-  };
-
   return (
-    <div className="space-y-6">
+    <div className="space-y-8 pb-12">
 
-      {/* 1. Selector de Periodo */}
-      {availablePeriods.length > 0 && (
-        <div className="flex items-center gap-2">
-          <Calendar size={15} className="text-gray-400" />
-          <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">Período:</span>
-          <div className="flex flex-wrap gap-1.5">
-            <button
-              onClick={() => setSelectedPeriod('all')}
-              className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${selectedPeriod === 'all' ? 'text-white shadow' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-              style={selectedPeriod === 'all' ? { backgroundColor: '#004DB4' } : {}}
-            >
-              Todo el año
-            </button>
-            {availablePeriods.map((p) => (
+      {/* ── HERO BANNER (ESTILO HOME) ────────────────────────────────────────── */}
+      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-[#004DB4] to-indigo-800 p-8 text-white shadow-xl">
+        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div className="space-y-2">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/20 backdrop-blur-md border border-white/30 text-xs font-bold uppercase tracking-wider">
+              <Trophy size={14} className="text-amber-400" /> Dashboard de Resultados
+            </div>
+            <h1 className="text-3xl font-black tracking-tight">Análisis de Optimización</h1>
+            <p className="text-blue-100 max-w-xl text-sm leading-relaxed">
+              Resumen comparativo de los escenarios generados. El modelo ha identificado el escenario <span className="text-white font-bold underline underline-offset-4 decoration-emerald-400">"{winner?.name}"</span> como el más eficiente.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-4 bg-white/10 backdrop-blur-xl rounded-2xl p-6 border border-white/20">
+            <div className="text-right">
+              <p className="text-[10px] uppercase font-bold text-blue-200 tracking-widest">Costo Mínimo</p>
+              <p className="text-3xl font-black tracking-tighter">{fmt$(minCost)}</p>
+            </div>
+            <div className="w-12 h-12 rounded-xl bg-emerald-500 flex items-center justify-center shadow-lg shadow-emerald-500/20">
+              <CheckCircle2 size={24} className="text-white" strokeWidth={2.5} />
+            </div>
+          </div>
+        </div>
+
+        {/* Decorative elements */}
+        <div className="absolute top-0 right-0 -mr-16 -mt-16 w-64 h-64 bg-white/10 rounded-full blur-3xl" />
+        <div className="absolute bottom-0 left-0 -ml-16 -mb-16 w-48 h-48 bg-blue-400/20 rounded-full blur-2xl" />
+      </div>
+
+      {/* ── PERIOD CLUSTERS (ESTILO HOME) ────────────────────────────────────── */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex items-center gap-4 bg-white border border-gray-100 p-1.5 rounded-2xl shadow-sm">
+          <button
+            onClick={() => setSelectedPeriod('all')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${selectedPeriod === 'all' ? 'bg-[#004DB4] text-white shadow-md' : 'text-gray-500 hover:bg-gray-50'}`}
+          >
+            Anual 2026
+          </button>
+          <div className="w-px h-4 bg-gray-200" />
+          <div className="flex gap-1">
+            {availablePeriods.slice(0, 4).map(p => (
               <button
                 key={p}
                 onClick={() => setSelectedPeriod(p)}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${selectedPeriod === p ? 'text-white shadow' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-                style={selectedPeriod === p ? { backgroundColor: '#004DB4' } : {}}
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all ${selectedPeriod === p ? 'bg-[#004DB4] text-white shadow-md' : 'text-gray-500 hover:bg-gray-50'}`}
               >
                 {p}
               </button>
             ))}
+            {availablePeriods.length > 4 && (
+              <div className="relative group">
+                <button className="px-3 py-2 rounded-xl text-xs font-bold text-gray-400 hover:bg-gray-50 flex items-center gap-1">
+                  Más <ChevronRight size={14} />
+                </button>
+                <div className="absolute top-full left-0 mt-2 hidden group-hover:grid grid-cols-3 gap-1 bg-white border border-gray-100 p-2 rounded-xl shadow-xl z-50 w-64">
+                  {availablePeriods.slice(4).map(p => (
+                    <button
+                      key={p}
+                      onClick={() => setSelectedPeriod(p)}
+                      className={`px-2 py-1.5 rounded-lg text-[10px] font-bold text-center ${selectedPeriod === p ? 'bg-[#004DB4] text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
-      )}
+      </div>
 
-      {/* 2. Resumen comparativo global */}
-      <Card title="Resumen Comparativo" subtitle="Diferencias respecto al escenario base (A)" icon={<Scale size={18} />}>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm border-collapse">
-            <thead>
-              <tr className="border-b border-gray-200">
-                <th className="pb-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-48">Indicador</th>
-                {metrics.map((m) => (
-                  <th key={m.id} className={`pb-3 text-center text-xs font-bold uppercase tracking-widest ${m.id === 'A' ? 'bg-blue-50/50 rounded-t-lg pt-1' : ''}`} style={{ color: m.color }}>
-                    {m.name}
-                    {m.id === 'A' && (
-                      <span className="block text-[9px] text-[#004DB4] opacity-70 font-black mt-0.5">ESCENARIO BASE</span>
-                    )}
-                  </th>
+      {/* ── SCENARIO CARDS (ESTILO HOME MÓDULOS) ──────────────────────────────── */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {metrics.map((m, idx) => (
+          <div key={m.id} className={`group relative bg-white rounded-3xl border-2 transition-all p-8 flex flex-col gap-6 hover:shadow-xl hover:-translate-y-1 ${m.id === 'A' ? 'border-[#004DB4]' : 'border-gray-50 hover:border-blue-100'}`}>
+            <div className="flex items-center justify-between">
+              <div className="w-14 h-14 rounded-2xl flex items-center justify-center shadow-inner" style={{ backgroundColor: `${m.color}15`, color: m.color }}>
+                {idx === 0 ? <Zap size={28} /> : idx === 1 ? <Scale size={28} /> : <FileSpreadsheet size={28} />}
+              </div>
+              <div className="flex flex-col items-end">
+                <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">Escenario</span>
+                <span className="text-xl font-black tracking-tight" style={{ color: m.color }}>{m.name}</span>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="flex items-end justify-between border-b border-gray-50 pb-4">
+                <div>
+                  <p className="text-[11px] font-bold text-gray-400 uppercase">Costo Total</p>
+                  <p className="text-2xl font-black text-gray-900 tracking-tighter">{fmt$(m.cost)}</p>
+                </div>
+                {m.id !== 'A' && baseMetric && (
+                  <div className="mb-1">{renderDiff(m.cost, baseMetric.cost)}</div>
+                )}
+                {m.id === 'A' && (
+                  <span className="mb-1 px-3 py-1 rounded-full bg-blue-50 text-[10px] font-black text-[#004DB4] border border-blue-100">BASE</span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase">Tonelaje</p>
+                  <p className="text-sm font-bold text-gray-700">{fmtTons(m.totalTons)} <span className="text-[10px] font-medium text-gray-400">TN</span></p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase">Eficiencia</p>
+                  <p className="text-sm font-bold text-gray-700">${m.costPerTon.toFixed(1)} <span className="text-[10px] font-medium text-gray-400">/TN</span></p>
+                </div>
+              </div>
+            </div>
+
+            <button className="w-full py-3 rounded-2xl bg-gray-50 text-gray-500 text-xs font-bold group-hover:bg-[#004DB4] group-hover:text-white transition-all flex items-center justify-center gap-2">
+              Ver detalle técnico <ChevronRight size={14} />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {/* ── TECHNICAL TABS ─────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+
+        {/* Gráfico de Costos */}
+        <PremiumCard title="Análisis de Costos" subtitle="Desglose por escenario y máquina" icon={<BarChart3 />}>
+          <div className="h-72 mt-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={useMemo(() => ['LAM1', 'LAM2', 'LAM3'].map(m => {
+                const row: any = { name: m };
+                activeScenarios.forEach(s => {
+                  row[s.name] = metrics.find(x => x.id === s.id)?.byMachine[m]?.cost ?? 0;
+                });
+                return row;
+              }), [metrics])} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fontWeight: 700, fill: '#6b7280' }} />
+                <YAxis axisLine={false} tickLine={false} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}K`} tick={{ fontSize: 10, fill: '#9ca3af' }} />
+                <Tooltip
+                  cursor={{ fill: '#f8fafc' }}
+                  contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)', padding: '16px' }}
+                />
+                <Legend iconType="circle" wrapperStyle={{ paddingTop: '20px' }} />
+                {activeScenarios.map((s) => (
+                  <Bar key={s.id} dataKey={s.name} fill={s.color} radius={[8, 8, 0, 0]} barSize={20} />
                 ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {/* Costo Total */}
-              <tr className="group hover:bg-gray-50/50 transition-colors">
-                <td className="py-4 pr-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center border border-emerald-100"><DollarSign size={16} strokeWidth={1.5} className="text-emerald-600" /></div>
-                    <div>
-                      <span className="block text-xs font-bold text-gray-800 tracking-tight">Costo Total</span>
-                      <span className="block text-[10px] text-gray-400 font-medium">Objetivo: minimizar</span>
-                    </div>
-                  </div>
-                </td>
-                {metrics.map((m) => (
-                  <td key={m.id} className={`py-4 text-center transition-all ${m.id === 'A' ? 'bg-blue-50/30' : ''}`}>
-                    <span className={`text-base font-black ${m.cost === minCost && m.cost > 0 ? 'text-emerald-600' : 'text-gray-900'}`}>{fmt$(m.cost)}</span>
-                    {m.id !== 'A' && baseMetric && renderDiff(m.cost, baseMetric.cost, true)}
-                    {m.cost === minCost && m.cost > 0 && (
-                      <div className="mt-1 flex items-center justify-center gap-1 text-[9px] font-black text-emerald-600 bg-emerald-100/50 px-2 py-0.5 rounded-full border border-emerald-200/50 w-fit mx-auto">
-                        <CheckCircle2 size={10} strokeWidth={2.5} /> EL MEJOR
-                      </div>
-                    )}
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </PremiumCard>
+
+        {/* Tabla de Indicadores */}
+        <PremiumCard title="Detalle de Indicadores" subtitle="Comparativa técnica profunda" icon={<Table2 />}>
+          <div className="overflow-x-auto mt-4">
+            <table className="w-full text-sm">
+              <tbody className="divide-y divide-gray-100">
+                <tr className="text-[10px] font-black text-gray-400 bg-gray-50/50 uppercase tracking-widest">
+                  <td className="py-2 px-4">KPI</td>
+                  {metrics.map(m => <td key={m.id} className="py-2 px-4 text-center">{m.name}</td>)}
+                </tr>
+
+                {/* Costo Total row with highlight */}
+                <tr className="font-bold text-gray-900 group hover:bg-gray-50/50 transition-colors">
+                  <td className="py-4 px-4 flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Costo Total
                   </td>
-                ))}
-              </tr>
-              {/* Sub-costos */}
-              {[
-                { icon: <Factory size={12} strokeWidth={1.5} className="text-gray-400" />, label: 'Fabricación', key: 'productionCost' },
-                { icon: <Clock size={12} strokeWidth={1.5} className="text-orange-400" />, label: 'Horas Extra', key: 'overtimeCost' },
-                { icon: <Zap size={12} strokeWidth={1.5} className="text-red-400" />, label: 'Energía Punta', key: 'peakPowerCost' },
-              ].map(({ icon, label, key }) => (
-                <tr key={key} className="text-xs">
-                  <td className="py-2 pl-9 text-gray-500 flex items-center gap-1.5">{icon}{label}</td>
-                  {metrics.map((m) => (
-                    <td key={m.id} className={`py-2 text-center font-mono text-gray-600 ${m.id === 'A' ? 'bg-blue-50/30' : ''}`}>
-                      {fmt$((m.bkdown as any)[key] || 0)}
+                  {metrics.map(m => (
+                    <td key={m.id} className="py-4 px-4 text-center font-black">
+                      {fmt$(m.cost)}
                     </td>
                   ))}
                 </tr>
-              ))}
 
-              {/* Costo/ton */}
-              <tr className="group hover:bg-amber-50/30 transition-colors">
-                <td className="py-4 pr-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-amber-50 flex items-center justify-center border border-amber-100"><TrendingUp size={16} strokeWidth={1.5} className="text-amber-600" /></div>
-                    <div>
-                      <span className="block text-xs font-bold text-gray-800 tracking-tight">Costo / Ton</span>
-                      <span className="block text-[10px] text-gray-400 font-medium">Eficiencia promedio</span>
-                    </div>
-                  </div>
-                </td>
-                {metrics.map((m) => (
-                  <td key={m.id} className={`py-4 text-center transition-all ${m.id === 'A' ? 'bg-blue-50/30' : ''}`}>
-                    <span className={`text-base font-black ${m.costPerTon === minCostPerTon && m.costPerTon > 0 ? 'text-amber-600' : 'text-gray-900'}`}>
-                      {m.costPerTon > 0 ? `$${m.costPerTon.toFixed(2)}` : '–'}
-                    </span>
-                    {m.id !== 'A' && baseMetric && renderDiff(m.costPerTon, baseMetric.costPerTon, true)}
-                  </td>
-                ))}
-              </tr>
-
-              {/* Producción */}
-              <tr className="group hover:bg-gray-50/50 border-t border-gray-100 transition-colors">
-                <td className="py-4 pr-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center border border-blue-100/50"><Scale size={16} strokeWidth={1.5} className="text-[#004DB4]" /></div>
-                    <div>
-                      <span className="block text-xs font-bold text-gray-800 tracking-tight">Producción Total</span>
-                      <span className="block text-[10px] text-gray-400 font-medium">Toneladas procesadas</span>
-                    </div>
-                  </div>
-                </td>
-                {metrics.map((m) => (
-                  <td key={m.id} className={`py-4 text-center transition-all ${m.id === 'A' ? 'bg-blue-50/30' : ''}`}>
-                    <span className="text-base font-black text-gray-900">{fmtTons(m.totalTons)}</span>
-                    <span className="text-[10px] text-gray-400 font-black ml-1">TN</span>
-                    {m.id !== 'A' && baseMetric && renderDiff(m.totalTons, baseMetric.totalTons, false)}
-                  </td>
-                ))}
-              </tr>
-
-              {/* Por máquina */}
-              {['LAM1', 'LAM2', 'LAM3'].map((mId) => (
-                <tr key={mId} className="text-xs group hover:bg-gray-50/30 transition-colors">
-                  <td className="py-2 pl-9">
-                    <span className="inline-block w-2 h-2 rounded-full mr-2 align-middle shadow-sm" style={{ backgroundColor: MACHINE_COLORS[mId] }} />
-                    <span className="text-gray-600 font-medium">{mId}</span>
-                  </td>
-                  {metrics.map((m) => {
-                    const info = m.byMachine[mId];
-                    const isHP = info.hours > info.base + 0.1;
-                    return (
-                      <td key={m.id} className={`py-2 text-center transition-all ${m.id === 'A' ? 'bg-blue-50/20' : ''}`}>
-                        <div className="flex flex-col items-center">
-                          <span className="font-mono text-gray-700 font-bold">{fmtTons(info.tons)} TN</span>
-                          <span className="text-[10px] text-gray-400 font-medium">{fmtH(info.hours)}</span>
-                          {isHP && (
-                            <span className="mt-1 inline-flex items-center gap-0.5 text-[9px] font-black text-amber-600 bg-amber-100/50 px-1.5 py-0.5 rounded border border-amber-200/50">
-                              <Zap size={8} strokeWidth={2.5} className="fill-amber-500" /> HP
-                            </span>
-                          )}
-                        </div>
+                {[
+                  { label: 'Energía Punta', key: 'peakPowerCost', icon: <Zap size={12} className="text-amber-500" /> },
+                  { label: 'Horas Extra', key: 'overtimeCost', icon: <Clock size={12} className="text-blue-500" /> },
+                  { label: 'No Atendido', key: 'unmetTons', suffix: ' TN', icon: <AlertTriangle size={12} className="text-red-500" /> }
+                ].map(item => (
+                  <tr key={item.key} className="text-gray-500 hover:bg-gray-50/30 transition-colors">
+                    <td className="py-3 px-4 flex items-center gap-2">
+                      {item.icon} {item.label}
+                    </td>
+                    {metrics.map(m => (
+                      <td key={m.id} className="py-3 px-4 text-center font-mono text-xs font-bold">
+                        {item.key === 'unmetTons' ? `${fmtTons(m.unmetTons)}${item.suffix}` : fmt$((m.bkdown as any)[item.key] || 0)}
                       </td>
-                    );
-                  })}
-                </tr>
-              ))}
-
-              {/* No atendido */}
-              <tr className="group hover:bg-red-50/10 border-t border-gray-100 transition-colors">
-                <td className="py-4 pr-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center border border-red-100"><AlertTriangle size={16} strokeWidth={1.5} className="text-red-500" /></div>
-                    <div>
-                      <span className="block text-xs font-bold text-gray-800 tracking-tight">No Atendido</span>
-                      <span className="block text-[10px] text-gray-400 font-medium">Demanda sin cubrir</span>
-                    </div>
-                  </div>
-                </td>
-                {metrics.map((m) => (
-                  <td key={m.id} className={`py-4 text-center transition-all ${m.id === 'A' ? 'bg-blue-50/30' : ''}`}>
-                    <span className={`text-base font-black ${m.unmetTons > 0 ? 'text-red-600' : 'text-gray-400'}`}>
-                      {fmtTons(m.unmetTons)} <span className="text-xs font-black">TN</span>
-                    </span>
-                    {m.unmetTons === 0 && (
-                      <div className="mt-1 flex items-center justify-center gap-1 text-[9px] font-black text-emerald-600 bg-emerald-100/50 px-2 py-0.5 rounded-full border border-emerald-200/50 w-fit mx-auto">
-                        <CheckCircle2 size={10} strokeWidth={2.5} /> 100% CUBIERTO
-                      </div>
-                    )}
-                  </td>
+                    ))}
+                  </tr>
                 ))}
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </Card>
-
-      {/* 3. Gráficos */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card title="Costos por Máquina" subtitle="Comparativa entre escenarios" icon={<DollarSign size={18} />}>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={costChart} margin={{ top: 10, right: 10, left: 0, bottom: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#6b7280', fontWeight: 600 }} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={(v: any) => `$${(v / 1000).toFixed(0)}K`} tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
-                <Tooltip
-                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)', padding: '12px' }}
-                  formatter={(v: any) => [fmt$(v), '']}
-                  cursor={{ fill: '#f9fafb' }}
-                />
-                <Legend wrapperStyle={{ fontSize: 11, fontWeight: 500, paddingTop: '15px' }} iconType="circle" />
-                {activeScenarios.map((s) => (
-                  <Bar key={s.id} dataKey={s.name} fill={s.color} radius={[6, 6, 0, 0]} barSize={24} />
-                ))}
-              </BarChart>
-            </ResponsiveContainer>
+              </tbody>
+            </table>
           </div>
-        </Card>
-        <Card title="Volumen por Máquina" subtitle="Toneladas por escenario" icon={<Scale size={18} />}>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={tonsChart} margin={{ top: 4, right: 16, left: 8, bottom: 4 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#6b7280' }} />
-                <YAxis tick={{ fontSize: 10, fill: '#9ca3af' }} />
-                <Tooltip formatter={(v: any) => `${fmtTons(v)} TN`} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                {activeScenarios.map((s) => (
-                  <Bar key={s.id} dataKey={s.name} fill={s.color} radius={[3, 3, 0, 0]} />
-                ))}
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
+        </PremiumCard>
+
       </div>
 
-      {/* 4. Tabla pivot de desplazamientos */}
+      {/* ── DETAIL PIVOT ──────────────────────────────────────────────────── */}
       {activeScenarios.length >= 2 && (
-        <Card
-          title="Detalle de Desplazamientos de SKU"
-          subtitle="SKUs que cambian de asignación de máquina entre escenarios"
-          icon={<Table2 size={18} />}
+        <PremiumCard
+          title="Desplazamientos de SKU"
+          subtitle="Análisis de movimiento de carga entre máquinas"
+          icon={<ArrowRightLeft />}
         >
-          {/* Selector de escenarios */}
-          <div className="flex flex-wrap items-center gap-2 mb-5 pb-4 border-b border-gray-100">
-            <span className="text-xs text-gray-400 uppercase tracking-wide flex items-center gap-1"><Filter size={10} /> Comparar:</span>
-            <select
-              value={baseId}
-              onChange={(e) => setBaseId(e.target.value)}
-              className="border border-gray-200 text-xs rounded-lg px-2 py-1.5 text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-400"
-            >
-              {activeScenarios.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-            <ArrowRightLeft size={12} className="text-gray-400" />
-            <select
-              value={targetId}
-              onChange={(e) => setTargetId(e.target.value)}
-              className="border border-gray-200 text-xs rounded-lg px-2 py-1.5 text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-400"
-            >
-              {activeScenarios.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
+          <div className="flex flex-col md:flex-row items-center gap-6 mb-8">
+            <div className="flex items-center gap-3 bg-gray-50 p-2 rounded-2xl border border-gray-100">
+              <select value={baseId} onChange={e => setBaseId(e.target.value)} className="bg-transparent text-xs font-bold text-gray-700 outline-none px-2 py-1">
+                {activeScenarios.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <div className="w-8 h-8 rounded-xl bg-white flex items-center justify-center shadow-sm border border-gray-100 text-[#004DB4]">
+                <ArrowRightLeft size={14} />
+              </div>
+              <select value={targetId} onChange={e => setTargetId(e.target.value)} className="bg-transparent text-xs font-bold text-gray-700 outline-none px-2 py-1">
+                {activeScenarios.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+            <p className="text-xs text-gray-400">Selecciona el escenario base para ver cómo se redistribuyó el tonelaje.</p>
           </div>
 
-          {baseId === targetId ? (
-            <p className="text-center text-sm text-gray-400 py-6">Selecciona dos escenarios diferentes para ver los cambios</p>
-          ) : (
-            <div className="space-y-4">
-              {renderPivotTable(baseId, activeScenarios.find((s) => s.id === baseId)?.name || 'Base', MACHINE_COLORS.LAM1)}
-              <div className="flex justify-center py-1">
-                <div className="bg-gray-100 border border-gray-200 rounded-full p-1.5 text-gray-400">
-                  <ArrowDown size={16} />
-                </div>
-              </div>
-              {renderPivotTable(targetId, activeScenarios.find((s) => s.id === targetId)?.name || 'Target', MACHINE_COLORS.LAM2)}
+          <div className="flex flex-col gap-6">
+
+            {/* Comparación Base vs Target */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {(() => {
+                const buildPivot = (data: PlannerOptimizationResult) => {
+                  const diffs = new Set<string>();
+                  const mapBase = new Map<string, string>();
+                  activeScenarios.find(s => s.id === baseId)?.data?.allocations.forEach((a: any) => mapBase.set(`${a.period}::${a.skuId}`, a.machineId));
+                  const mapTarget = new Map<string, string>();
+                  activeScenarios.find(s => s.id === targetId)?.data?.allocations.forEach((a: any) => mapTarget.set(`${a.period}::${a.skuId}`, a.machineId));
+
+                  const allSkus = new Set([...Array.from(mapBase.keys()), ...Array.from(mapTarget.keys())]);
+                  allSkus.forEach(key => {
+                    if (mapBase.get(key) !== mapTarget.get(key)) diffs.add(key.split('::')[1]);
+                  });
+
+                  const pivot: any = {};
+                  data.allocations.filter((a: any) => diffs.has(a.skuId)).forEach((a: any) => {
+                    if (!pivot[a.skuId]) pivot[a.skuId] = { desc: a.skuDesc, machines: {} };
+                    pivot[a.skuId].machines[a.machineId] = (pivot[a.skuId].machines[a.machineId] || 0) + a.quantity;
+                  });
+                  return { pivot, diffs };
+                };
+
+                const renderMiniTable = (scenId: string) => {
+                  const sc = activeScenarios.find(s => s.id === scenId);
+                  if (!sc) return null;
+                  const { pivot } = buildPivot(sc.data!);
+                  return (
+                    <div className="bg-gray-50/50 rounded-2xl border border-gray-100 p-4">
+                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full" style={{ backgroundColor: sc.color }} /> {sc.name}
+                      </p>
+                      <div className="space-y-2">
+                        {Object.keys(pivot).slice(0, 5).map(skuId => (
+                          <div key={skuId} className="flex items-center justify-between text-xs bg-white p-2 rounded-lg shadow-sm border border-gray-100/50">
+                            <span className="font-bold text-gray-700">{skuId}</span>
+                            <div className="flex gap-2">
+                              {Object.keys(pivot[skuId].machines).map(mId => (
+                                <span key={mId} className="px-1.5 py-0.5 rounded-md text-[9px] font-black text-white" style={{ backgroundColor: MACHINE_COLORS[mId] || '#6b7280' }}>{mId}</span>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                        {Object.keys(pivot).length > 5 && (
+                          <p className="text-[10px] text-center text-gray-400 italic">Y {Object.keys(pivot).length - 5} SKUs más...</p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                };
+
+                return (
+                  <>
+                    {renderMiniTable(baseId)}
+                    {renderMiniTable(targetId)}
+                  </>
+                );
+              })()}
             </div>
-          )}
-        </Card>
+
+            <div className="py-8 flex flex-col items-center justify-center border-2 border-dashed border-gray-100 rounded-3xl bg-gray-50/30">
+              <FileSpreadsheet className="text-[#004DB4] mb-3 opacity-20" size={40} strokeWidth={1.5} />
+              <p className="text-sm font-bold text-gray-400">Desglose avanzado disponible en reportes</p>
+              <button className="mt-4 px-8 py-2.5 bg-[#004DB4] rounded-xl shadow-lg shadow-blue-900/10 text-xs font-black text-white hover:bg-blue-700 transition-all flex items-center gap-2">
+                <TrendingUp size={14} /> ANALIZAR TODOS LOS CAMBIOS
+              </button>
+            </div>
+          </div>
+        </PremiumCard>
       )}
+
     </div>
   );
 };
