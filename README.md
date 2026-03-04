@@ -136,6 +136,97 @@ Pueden interrumpir una orden o insertarse entre órdenes.
 
 ---
 
+## Planificador de Capacidad y Costos — Motor de Optimización
+
+### Descripción General
+
+El módulo **Planificador** (`/planificador`) implementa un **motor de programación lineal (LP)** que distribuye la demanda mensual de SKUs entre los tres laminadores (LAM1, LAM2, LAM3), minimizando el costo total de producción bajo restricciones de capacidad. Utiliza la librería `javascript-lp-solver`.
+
+### Fuentes de Datos
+
+| Origen | Dato | Tabla / Store |
+|--------|------|---------------|
+| **Maestro de Costos** (Supabase) | Costo unitario (S/./TN), ritmo (t/h) y compatibilidad SKU-Laminador | `scheduler_maestro_costos` |
+| **Maestro Capacidad** (Config UI) | Horas base y totales por laminador y periodo | `usePlannerStore.capacitySchedule` |
+| **Carga de Datos** (Pegado TSV) | Demanda mensual en toneladas por SKU y periodo | `scheduler_planner_state` |
+
+### Modelo Matemático
+
+Para cada periodo mensual el solver construye un modelo LP con la siguiente estructura:
+
+```
+Minimizar:   Σ (costo_unitario[sku][maq] × x[sku][maq])
+             + Σ (overtimeRate[maq] × overtime[maq])
+             + Σ (peakPowerCost[maq] × is_peak[maq])
+
+Sujeto a:
+  [Demanda]    Σ_maq x[sku][maq] + slack[sku]  = demanda[sku]     ∀ sku
+  [Cap. Dura]  Σ_sku (tiempo[sku][maq] × x[sku][maq]) ≤ cap_hard[maq]  ∀ maq
+  [Cap. Suave] Σ_sku (tiempo[sku][maq] × x[sku][maq]) ≤ cap_base[maq]  ∀ maq  (solo smart/force_peak)
+  [No neg.]    x[sku][maq] ≥ 0
+```
+
+Donde `tiempo[sku][maq] = 1 / ritmo_th` (horas por tonelada) y `slack[sku]` es la demanda no atendida con costo penalizado (9,999,999,999 S/./TN).
+
+### Los 3 Escenarios
+
+#### Escenario A — Óptimo Económico (`smart`)
+
+> **Objetivo**: Minimizar el costo total equilibrando uso de horas base, horas extra y energía punta.
+
+- **Capacidad**: Puede usar horas extra (hasta el límite total del laminador), pero el modelo las penaliza explícitamente con la tasa `overtimeRate [S/./h]`.
+- **Energía Punta**: El uso de horas punta activa una variable binaria `is_peak[maq]` que suma el costo fijo `peakPowerCost [S/. por evento]`. El solver *solo* activa la hora punta si el ahorro en asignación lo justifica.
+- **Resultado esperado**: El escenario más barato cuando hay opción de redistribuir carga entre laminadores. Los costos de hora extra y punta aparecen en el desglose del resultado.
+
+#### Escenario B — Máxima Capacidad (`force_peak`)
+
+> **Objetivo**: Usar toda la capacidad disponible (base + extra + punta) sin restricción de penalización binaria.
+
+- **Capacidad**: Idéntico límite total al Escenario A, pero **no hay restricción de activación binaria** de energía punta — se asume que el laminador siempre puede incurrir en ese costo si es necesario.
+- **Energía Punta**: Se factura el `overtimeRate` sobre las horas extra usadas, pero `is_peak` no es variable binaria (no hay `bigM` constraint). Esto simplifica el modelo y permite mayor volumen.
+- **Cuándo difiere del A**: Cuando el solver del Escenario A elegiría *no* activar un laminador en hora punta por costo prohibitivo, el B lo usa de todas formas.
+
+#### Escenario C — Solo Base (`base_only`)
+
+> **Objetivo**: Producir únicamente dentro de las horas regulares (sin horas extra ni energía punta).
+
+- **Capacidad**: El límite duro `cap_hard[maq]` se fija igual a `cap_base[maq]`. Las horas extra no existen como variable.
+- **Sin penalizaciones**: No hay `overtimeRate` ni `peakPowerCost` en el modelo — el costo es puramente de producción.
+- **Resultado esperado**: El escenario con menor costo unitario por tonelada producida, pero con mayor volumen de demanda no atendida cuando la capacidad base es insuficiente. Útil como línea base de comparación.
+
+### Comparativa de Modos
+
+| Característica | A — Óptimo | B — Máx. Capacidad | C — Solo Base |
+|----------------|:----------:|:------------------:|:-------------:|
+| Horas extra | ✅ Penalizadas | ✅ Permitidas | ❌ No |
+| Energía punta | ✅ Binaria (óptima) | ✅ Libre | ❌ No |
+| Costo más bajo | ✅ Generalmente | ⚠️ Puede ser mayor | ✅ Por TN |
+| Máx. producción | ⚠️ Depende del solver | ✅ Sí | ❌ No |
+| Demanda no atendida | Variable | Mínima | Máxima |
+
+### Lógica Post-Optimización
+
+Tras resolver el LP, los costos de hora extra y energía punta se **recalculan directamente** comparando el uso real del laminador vs. su capacidad base:
+
+```
+Si machineUsage[maq] > cap_base[maq]:
+    extra  = machineUsage[maq] - cap_base[maq]
+    overtimeCost  += extra × overtimeRate[maq]
+    peakPowerCost += peakPowerCost[maq]  (costo fijo por evento)
+```
+
+El costo total reportado es: `Costo Producción + Costo Hora Extra + Costo Energía Punta`.
+
+### Parámetros por Defecto (Maestro Capacidad)
+
+| Laminador | `overtimeRate` (S/./h) | `peakPowerCost` (S/. /evento) |
+|-----------|:----------------------:|:-----------------------------:|
+| LAM1      | 300.0                  | 144,000                       |
+| LAM2      | 450.0                  | 124,600                       |
+| LAM3      | 300.0                  | 42,525                        |
+
+---
+
 ## Lineamientos de Desarrollo
 
 1. **Fuente de Verdad**: Este README define el funcionamiento esperado.

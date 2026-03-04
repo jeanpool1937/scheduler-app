@@ -277,6 +277,7 @@ const runMultiPeriodScenario = (
 
 /**
  * Normalize a raw period value to YYYY-MM format.
+ * Handles: Excel serial number, Date object, YYYY-MM-DD, YYYY/MM, DD/MM/YYYY, DD-MM-YYYY.
  */
 const toPeriodStr = (rawPeriod: any): string => {
     if (!rawPeriod) return '';
@@ -289,11 +290,17 @@ const toPeriodStr = (rawPeriod: any): string => {
         return rawPeriod.toISOString().slice(0, 7);
     }
     const s = String(rawPeriod).trim();
-    // Handles YYYY-MM-DD, YYYY/MM/DD, YYYY-MM, YYYY/MM
-    const match = s.match(/^(\d{4})[\-\/](\d{2})/);
-    if (match) return `${match[1]}-${match[2]}`;
-    const d = new Date(s);
-    if (!isNaN(d.getTime())) return d.toISOString().slice(0, 7);
+
+    // 1. YYYY-MM-DD or YYYY/MM/DD or YYYY-MM or YYYY/MM  (año primero)
+    const isoMatch = s.match(/^(\d{4})[\-\/](\d{2})/);
+    if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}`;
+
+    // 2. DD/MM/YYYY or DD-MM-YYYY  (formato peruano / europeo — DÍA primero)
+    const dmyMatch = s.match(/^(\d{2})[\-\/](\d{2})[\-\/](\d{4})/);
+    if (dmyMatch) return `${dmyMatch[3]}-${dmyMatch[2]}`;
+
+    // 3. Último recurso: dejar que el motor de fechas intente parsear
+    //    (evitar para DD/MM ya que JS lo interpreta como MM/DD)
     return s;
 };
 
