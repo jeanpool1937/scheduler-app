@@ -2,10 +2,11 @@
 import React, { useState } from 'react';
 import { ArticleMaster } from './ArticleMaster';
 import { ChangeoverMaster } from './ChangeoverMaster';
-import { Table, ArrowRightLeft } from 'lucide-react';
+import { CostosMaster } from './database/CostosMaster';
+import { Table, ArrowRightLeft, DollarSign } from 'lucide-react';
 
 export const DatabaseLayout: React.FC = () => {
-    const [activeSubTab, setActiveSubTab] = useState<'articles' | 'changeovers'>('articles');
+    const [activeSubTab, setActiveSubTab] = useState<'articles' | 'changeovers' | 'costos'>('articles');
 
     return (
         <div className="h-full flex flex-col">
@@ -14,8 +15,8 @@ export const DatabaseLayout: React.FC = () => {
                 <button
                     onClick={() => setActiveSubTab('articles')}
                     className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeSubTab === 'articles'
-                            ? 'border-blue-600 text-blue-600'
-                            : 'border-transparent text-gray-500 hover:text-gray-700'
+                        ? 'border-blue-600 text-blue-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700'
                         }`}
                 >
                     <Table size={16} />
@@ -24,12 +25,22 @@ export const DatabaseLayout: React.FC = () => {
                 <button
                     onClick={() => setActiveSubTab('changeovers')}
                     className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeSubTab === 'changeovers'
-                            ? 'border-blue-600 text-blue-600'
-                            : 'border-transparent text-gray-500 hover:text-gray-700'
+                        ? 'border-blue-600 text-blue-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700'
                         }`}
                 >
                     <ArrowRightLeft size={16} />
                     Matriz de Cambios
+                </button>
+                <button
+                    onClick={() => setActiveSubTab('costos')}
+                    className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeSubTab === 'costos'
+                        ? 'border-blue-600 text-blue-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700'
+                        }`}
+                >
+                    <DollarSign size={16} />
+                    Costos por Proceso
                 </button>
             </div>
 
@@ -37,6 +48,7 @@ export const DatabaseLayout: React.FC = () => {
             <div className="flex-1 overflow-hidden">
                 {activeSubTab === 'articles' && <ArticleMaster />}
                 {activeSubTab === 'changeovers' && <ChangeoverMaster />}
+                {activeSubTab === 'costos' && <CostosMaster />}
             </div>
         </div>
     );

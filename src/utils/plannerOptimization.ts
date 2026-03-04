@@ -13,13 +13,9 @@ import type {
     PlannerExcelData,
     OptimizationMode,
 } from '../types/planner';
+import type { MaestroCostosItem } from '../store/useCostosStore';
 
-// Declare the global LP solver from CDN
-declare global {
-    interface Window {
-        solver: any;
-    }
-}
+import solver from 'javascript-lp-solver';
 
 // ─── Single Period LP Solver ────────────────────────────────────────────
 const solveSinglePeriod = (
@@ -32,7 +28,7 @@ const solveSinglePeriod = (
     compat: { [sku: string]: { [machine: string]: number } },
     mode: OptimizationMode
 ): PlannerMonthlyResult => {
-    if (!window.solver) throw new Error('Solver library not loaded. Include javascript-lp-solver via CDN.');
+    if (!solver) throw new Error('Solver library not loaded. Check import.');
 
     const allSkus = Array.from(demandMap.keys());
     const model: any = {
@@ -118,7 +114,7 @@ const solveSinglePeriod = (
     });
 
     // 4. Solve
-    const results = window.solver.Solve(model);
+    const results = solver.Solve(model) as Record<string, number>;
 
     // 5. Parse results
     const allocations: PlannerProductionResult[] = [];
@@ -285,6 +281,7 @@ const runMultiPeriodScenario = (
  */
 export const runPlannerOptimization = (
     data: PlannerExcelData,
+    maestroCostos: MaestroCostosItem[],
     machineCosts: MachineCost[],
     schedule: PeriodCapacity[]
 ) => {
@@ -302,14 +299,8 @@ export const runPlannerOptimization = (
     const masterDemand = new Map<string, string>();
     if (data.Demanda && data.Demanda.length > 0) {
         data.Demanda.forEach((r: any) => {
-            const sku = getValue(r, 'SKU', 'Codigo');
-            const desc = getValue(r, 'Descripcion', 'Desc', 'Material') || '';
-            if (sku) masterDemand.set(cleanId(sku), String(desc));
-        });
-    } else {
-        data.Costos.forEach((r: any) => {
-            const sku = getValue(r, 'SKU', 'Codigo');
-            const desc = getValue(r, 'Descripcion', 'Desc', 'Material') || '';
+            const sku = getValue(r, 'SKU', 'Codigo', 'Cod_Producto', 'Código_Producto', 'Material');
+            const desc = getValue(r, 'Descripcion', 'Desc', 'Material', 'Texto_Breve', 'Descripción');
             if (sku) masterDemand.set(cleanId(sku), String(desc));
         });
     }
@@ -317,9 +308,9 @@ export const runPlannerOptimization = (
     // 2. Period transactions
     const periodData: { period: string; sku: string; qty: number }[] = [];
     data.Periodos.forEach((r: any) => {
-        const rawPeriod = getValue(r, 'Periodo', 'Fecha', 'Mes');
-        const sku = getValue(r, 'SKU', 'Codigo');
-        const qty = getValue(r, 'Demanda', 'Cantidad', 'Qty');
+        const rawPeriod = getValue(r, 'Periodo', 'Fecha', 'Mes', 'Mes_Prod', 'Period');
+        const sku = getValue(r, 'SKU', 'Codigo', 'Cod_Producto', 'Código_Producto', 'Material');
+        const qty = getValue(r, 'Demanda', 'Cantidad', 'Qty', 'TN', 'Volumen', 'Tn_Total');
 
         if (rawPeriod && sku && qty) {
             let periodStr = String(rawPeriod);
@@ -338,17 +329,20 @@ export const runPlannerOptimization = (
         }
     });
 
-    // 3. Cost, Time, and Compatibility matrices
+    // 3. Cost, Time, and Compatibility matrices from Maestro Costos
+    // 3. Cost, Time, and Compatibility matrices from Maestro Costos with fallback to Excel
     const costs: any = {};
     const times: any = {};
     const compat: any = {};
 
+    // Helper to process legacy Excel matrices if needed
     const processMatrix = (rows: any[], target: any) => {
+        if (!rows || !Array.isArray(rows)) return;
         rows.forEach((r: any) => {
-            const skuVal = getValue(r, 'SKU', 'Codigo');
+            const skuVal = getValue(r, 'SKU', 'Codigo', 'Cod_Producto', 'Código_Producto', 'Material');
             if (!skuVal) return;
             const sku = cleanId(skuVal);
-            target[sku] = {};
+            if (!target[sku]) target[sku] = {};
             Object.keys(r).forEach((key) => {
                 const cleanKey = cleanId(key);
                 const matchedMachine = machineCosts.find(
@@ -361,9 +355,35 @@ export const runPlannerOptimization = (
         });
     };
 
-    processMatrix(data.Costos, costs);
-    processMatrix(data.Tiempos, times);
-    processMatrix(data.Compatibilidad, compat);
+    if (maestroCostos && maestroCostos.length > 0) {
+        maestroCostos.forEach((c) => {
+            const sku = cleanId(c.codigo_sap);
+            const machine = cleanId(c.codigo_lam);
+
+            if (!costs[sku]) costs[sku] = {};
+            if (!times[sku]) times[sku] = {};
+            if (!compat[sku]) compat[sku] = {};
+
+            // a) Costos
+            costs[sku][machine] = c.costo_total_lam_sin_cf;
+
+            // b) Tiempos (Horas por Tonelada) = 1 / Ritmo t/h
+            times[sku][machine] = c.ritmo_th > 0 ? 1 / c.ritmo_th : 0;
+
+            // c) Compatibilidad (Implícita si existe un ritmo válido)
+            compat[sku][machine] = c.ritmo_th > 0 ? 1 : 0;
+
+            // Ensure sku is in masterDemand
+            if (!masterDemand.has(sku) && c.descripcion) {
+                masterDemand.set(sku, String(c.descripcion));
+            }
+        });
+    } else {
+        // Fallback to data from Excel (or Sample Data)
+        processMatrix(data.Costos || [], costs);
+        processMatrix(data.Tiempos || [], times);
+        processMatrix(data.Compatibilidad || [], compat);
+    }
 
     const resultA = runMultiPeriodScenario('Escenario A (Óptimo)', periodData, masterDemand, machineCosts, schedule, costs, times, compat, 'smart');
     const resultB = runMultiPeriodScenario('Escenario B (Máxima Capacidad)', periodData, masterDemand, machineCosts, schedule, costs, times, compat, 'force_peak');

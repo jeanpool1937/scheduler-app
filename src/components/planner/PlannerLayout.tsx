@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { usePlannerStore } from '../../store/usePlannerStore';
+import { useCostosStore } from '../../store/useCostosStore';
 import { useStore } from '../../store/useStore';
 import { runPlannerOptimization, getPlannerSampleData } from '../../utils/plannerOptimization';
 import type { MachineCost, PeriodCapacity, PlannerExcelData } from '../../types/planner';
@@ -269,9 +270,6 @@ const DataPanel: React.FC = () => {
                     const parsed: PlannerExcelData = {
                         Demanda: getValue('Demanda'),
                         Periodos: getValue('Periodos'),
-                        Tiempos: getValue('Tiempos'),
-                        Compatibilidad: getValue('Compatibilidad'),
-                        Costos: getValue('Costos'),
                     };
 
                     setExcelData(parsed, file.name);
@@ -299,7 +297,7 @@ const DataPanel: React.FC = () => {
                     </div>
                     <div>
                         <h3 className="text-lg font-semibold text-gray-900">Carga de Datos</h3>
-                        <p className="text-sm text-gray-500">Sube el archivo Excel con Demanda, Periodos, Tiempos, Compatibilidad y Costos</p>
+                        <p className="text-sm text-gray-500">Sube el archivo Excel con Demanda y Periodos. Costos y Tiempos se asumen desde el Maestro BD.</p>
                     </div>
                 </div>
 
@@ -317,7 +315,7 @@ const DataPanel: React.FC = () => {
                     <div className="mt-4 p-3 bg-emerald-50 rounded-lg border border-emerald-200 flex items-center gap-2">
                         <Check className="w-4 h-4 text-emerald-600" />
                         <span className="text-sm text-emerald-700 font-medium">
-                            Archivo cargado: <strong>{fileName}</strong> — {excelData.Periodos.length} registros de demanda, {excelData.Costos.length} SKUs en costos
+                            Archivo cargado: <strong>{fileName}</strong> — {excelData.Periodos.length} registros de demanda detectados.
                         </span>
                     </div>
                 )}
@@ -578,6 +576,7 @@ export const PlannerLayout: React.FC = () => {
         isOptimizing,
         setIsOptimizing,
     } = usePlannerStore();
+    const { costos } = useCostosStore();
 
     const views = [
         { id: 'config' as const, label: 'Maestro Capacidad', icon: Settings },
@@ -592,37 +591,25 @@ export const PlannerLayout: React.FC = () => {
         }
         setIsOptimizing(true);
 
-        // Ensure LP solver is loaded
-        if (!window.solver) {
-            const script = document.createElement('script');
-            script.src = 'https://unpkg.com/javascript-lp-solver/prod/solver.js';
-            script.onload = () => {
-                runOpt();
-            };
-            script.onerror = () => {
-                alert('No se pudo cargar el solver. Verifica tu conexión a internet.');
-                setIsOptimizing(false);
-            };
-            document.head.appendChild(script);
-        } else {
-            runOpt();
-        }
-
-        function runOpt() {
+        // Agregamos un peque\u00f1o retraso para que UI se actualice a "Optimizando..."
+        setTimeout(() => {
             try {
+                console.log('Iniciando optimizaci\u00f3n LP...', { machineCosts, capacitySchedule });
                 const { resultA, resultB, resultC } = runPlannerOptimization(
                     excelData!,
+                    costos,
                     machineCosts,
                     capacitySchedule
                 );
+                console.log('Optimizaci\u00f3n terminada', { resultA });
                 setResults(resultA, resultB, resultC);
             } catch (err: any) {
                 console.error('Optimization error:', err);
-                alert(`Error en la optimización: ${err.message}`);
+                alert(`Error en la optimizaci\u00f3n: ${err.message}`);
             } finally {
                 setIsOptimizing(false);
             }
-        }
+        }, 100);
     };
 
     return (

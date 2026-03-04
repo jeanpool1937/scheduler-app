@@ -67,9 +67,9 @@ export interface PlannerOptimizationResult {
 export interface PlannerExcelData {
     Demanda: any[];
     Periodos: any[];
-    Tiempos: any[];
-    Compatibilidad: any[];
-    Costos: any[];
+    Tiempos?: any[];
+    Compatibilidad?: any[];
+    Costos?: any[];
 }
 
 export type OptimizationMode = 'smart' | 'force_peak' | 'base_only';
