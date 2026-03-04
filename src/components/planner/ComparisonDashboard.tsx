@@ -73,6 +73,7 @@ const ComparisonDashboard: React.FC<ComparisonProps> = ({
   const [selectedPeriod, setSelectedPeriod] = useState<string>('all');
   const [baseId, setBaseId] = useState<string>(activeScenarios[0]?.id || 'A');
   const [targetId, setTargetId] = useState<string>(activeScenarios[1]?.id || 'B');
+  const [expandedSku, setExpandedSku] = useState<Record<string, boolean>>({});
 
   const availablePeriods = useMemo(() => {
     const set = new Set<string>();
@@ -398,24 +399,40 @@ const ComparisonDashboard: React.FC<ComparisonProps> = ({
                   const sc = activeScenarios.find(s => s.id === scenId);
                   if (!sc) return null;
                   const { pivot } = buildPivot(sc.data!);
+                  const allSkuKeys = Object.keys(pivot);
+                  const isExpanded = !!expandedSku[scenId];
+                  const visibleKeys = isExpanded ? allSkuKeys : allSkuKeys.slice(0, 5);
+                  const hiddenCount = allSkuKeys.length - 5;
                   return (
                     <div className="bg-gray-50/50 rounded-2xl border border-gray-100 p-4">
                       <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
                         <div className="w-2 h-2 rounded-full" style={{ backgroundColor: sc.color }} /> {sc.name}
                       </p>
                       <div className="space-y-2">
-                        {Object.keys(pivot).slice(0, 5).map(skuId => (
-                          <div key={skuId} className="flex items-center justify-between text-xs bg-white p-2 rounded-lg shadow-sm border border-gray-100/50">
-                            <span className="font-bold text-gray-700">{skuId}</span>
-                            <div className="flex gap-2">
+                        {visibleKeys.map(skuId => (
+                          <div key={skuId} className="flex items-center justify-between text-xs bg-white p-2 rounded-lg shadow-sm border border-gray-100/50 gap-2">
+                            <div className="flex flex-col min-w-0">
+                              <span className="font-black text-gray-800 text-[11px]">{skuId}</span>
+                              {pivot[skuId].desc && (
+                                <span className="text-[10px] text-gray-400 font-medium truncate max-w-[180px]" title={pivot[skuId].desc}>
+                                  {pivot[skuId].desc}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex gap-1 flex-shrink-0">
                               {Object.keys(pivot[skuId].machines).map(mId => (
                                 <span key={mId} className="px-1.5 py-0.5 rounded-md text-[9px] font-black text-white" style={{ backgroundColor: MACHINE_COLORS[mId] || '#6b7280' }}>{mId}</span>
                               ))}
                             </div>
                           </div>
                         ))}
-                        {Object.keys(pivot).length > 5 && (
-                          <p className="text-[10px] text-center text-gray-400 italic">Y {Object.keys(pivot).length - 5} SKUs más...</p>
+                        {hiddenCount > 0 && (
+                          <button
+                            onClick={() => setExpandedSku(prev => ({ ...prev, [scenId]: !isExpanded }))}
+                            className="w-full text-[10px] text-center text-[#004DB4] font-bold py-1 rounded-lg hover:bg-blue-50 transition-colors"
+                          >
+                            {isExpanded ? '\u25b2 Ver menos' : `\u25bc Ver ${hiddenCount} SKUs m\u00e1s`}
+                          </button>
                         )}
                       </div>
                     </div>
