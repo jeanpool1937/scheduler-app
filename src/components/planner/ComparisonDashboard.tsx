@@ -7,7 +7,7 @@ import {
   AlertTriangle, Scale, CheckCircle2,
   ArrowDown, ArrowUp, Table2, ArrowRightLeft, Zap,
   Clock, FileSpreadsheet,
-  Trophy, ChevronRight, BarChart3
+  Trophy, ChevronRight, BarChart3, X
 } from 'lucide-react';
 
 // ─── Design tokens (same as PlannerLayout) ──────────────────────────────────
@@ -74,6 +74,7 @@ const ComparisonDashboard: React.FC<ComparisonProps> = ({
   const [baseId, setBaseId] = useState<string>(activeScenarios[0]?.id || 'A');
   const [targetId, setTargetId] = useState<string>(activeScenarios[1]?.id || 'B');
   const [expandedSku, setExpandedSku] = useState<Record<string, boolean>>({});
+  const [technicalModalData, setTechnicalModalData] = useState<any | null>(null);
 
   const availablePeriods = useMemo(() => {
     const set = new Set<string>();
@@ -125,6 +126,7 @@ const ComparisonDashboard: React.FC<ComparisonProps> = ({
       id: s.id, name: s.name, color: s.color,
       cost, bkdown, totalTons, costPerTon, byMachine,
       unmetTons: unmet.reduce((acc: number, u: any) => acc + u.amount, 0),
+      originalData: r,
     };
   });
 
@@ -259,7 +261,9 @@ const ComparisonDashboard: React.FC<ComparisonProps> = ({
               </div>
             </div>
 
-            <button className="w-full py-3 rounded-2xl bg-gray-50 text-gray-500 text-xs font-bold group-hover:bg-[#004DB4] group-hover:text-white transition-all flex items-center justify-center gap-2">
+            <button
+              onClick={() => setTechnicalModalData(m)}
+              className="w-full py-3 rounded-2xl bg-gray-50 text-gray-500 text-xs font-bold group-hover:bg-[#004DB4] group-hover:text-white transition-all flex items-center justify-center gap-2">
               Ver detalle técnico <ChevronRight size={14} />
             </button>
           </div>
@@ -452,8 +456,133 @@ const ComparisonDashboard: React.FC<ComparisonProps> = ({
         </PremiumCard>
       )}
 
+      {/* ── MODAL DETALLE TÉCNICO ───────────────────────────────────────────── */}
+      {technicalModalData && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-900/50 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="px-8 py-6 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+              <div>
+                <h2 className="text-2xl font-black text-gray-900 tracking-tight">Detalle técnico</h2>
+                <p className="text-sm font-bold mt-1" style={{ color: technicalModalData.color }}>Escenario: {technicalModalData.name}</p>
+              </div>
+              <button
+                onClick={() => setTechnicalModalData(null)}
+                className="w-10 h-10 rounded-full bg-white border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-gray-100 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-8 overflow-y-auto">
+              {(() => {
+                const m = technicalModalData;
+                const r = m.originalData;
+
+                // Si hay un periodo seleccionado que no es 'all', extraemos solo ese
+                const isAll = selectedPeriod === 'all';
+                let monthsToEval = r.monthlyResults || [];
+                if (!isAll) {
+                  const mm = monthsToEval.find((x: any) => x.period === selectedPeriod);
+                  monthsToEval = mm ? [mm] : [];
+                }
+
+                const MACHINE_PARAMS: Record<string, { hp: number, extra: number }> = {
+                  'LAM1': { hp: 20300, extra: 520 },
+                  'LAM2': { hp: 31000, extra: 600 },
+                  'LAM3': { hp: 26050, extra: 560 }
+                };
+
+                const calcCostoHP = (lam: string) => {
+                  if (r.scenarioName === 'Base Only') return 0; // Tradicional no tiene HP
+                  let hpCount = 0;
+                  monthsToEval.forEach((monthData: any) => {
+                    const usage = monthData.machineUsage[lam] || 0;
+                    const bCap = monthData.capacities?.[lam]?.base || 0;
+                    if (usage > bCap + 0.01) hpCount++;
+                  });
+                  return hpCount * (MACHINE_PARAMS[lam]?.hp || 0);
+                };
+
+                const calcCostoExtra = (lam: string) => {
+                  if (r.scenarioName === 'Base Only') return 0;
+                  let extraT = 0;
+                  monthsToEval.forEach((monthData: any) => {
+                    const usage = monthData.machineUsage[lam] || 0;
+                    const bCap = monthData.capacities?.[lam]?.base || 0;
+                    if (usage > bCap + 0.01) {
+                      extraT += (usage - bCap) * (MACHINE_PARAMS[lam]?.extra || 0);
+                    }
+                  });
+                  return extraT;
+                };
+
+                const calcBaseCap = (lam: string) => {
+                  let sum = 0;
+                  monthsToEval.forEach((monthData: any) => {
+                    sum += monthData.capacities?.[lam]?.base || 0;
+                  });
+                  return sum;
+                };
+
+                const calcTotalCap = (lam: string) => {
+                  let sum = 0;
+                  monthsToEval.forEach((monthData: any) => {
+                    sum += monthData.capacities?.[lam]?.total || 0;
+                  });
+                  return sum;
+                };
+
+                const RowData = ({ label, vals, isMoney, isTons, isTotal }: { label: string, vals: number[], isMoney?: boolean, isTons?: boolean, isTotal?: boolean }) => (
+                  <div className={`grid grid-cols-4 gap-4 py-3 border-b border-gray-100 ${isTotal ? 'bg-gray-50 font-black text-gray-800' : 'text-sm text-gray-700 font-medium'}`}>
+                    <div className="pl-4">{label}</div>
+                    {vals.map((v, i) => (
+                      <div key={i} className={`text-right pr-4 ${isTotal ? '' : 'text-gray-600'}`}>
+                        {isMoney ? fmt$(v) : isTons ? fmtTons(v) : fmtNum(v)}
+                      </div>
+                    ))}
+                  </div>
+                );
+
+                const renderCategory = (catName: string, rows: any[]) => (
+                  <div className="mb-6 border border-gray-100 rounded-xl overflow-hidden shadow-sm">
+                    <div className="grid grid-cols-4 gap-4 bg-[#f4f7fb] py-3 text-xs font-black text-gray-500 uppercase tracking-widest border-b border-gray-100">
+                      <div className="pl-4">{catName}</div>
+                      <div className="text-right pr-4">LAM 1</div>
+                      <div className="text-right pr-4">LAM 2</div>
+                      <div className="text-right pr-4">LAM 3</div>
+                    </div>
+                    {rows.map((r, i) => <RowData key={i} {...r} />)}
+                  </div>
+                );
+
+                return (
+                  <div>
+                    {renderCategory('Hora', [
+                      { label: 'Horas Producidas', vals: ['LAM1', 'LAM2', 'LAM3'].map(l => m.byMachine[l]?.hours || 0) },
+                      { label: 'Capacidad sin HP', vals: ['LAM1', 'LAM2', 'LAM3'].map(l => calcBaseCap(l)) },
+                      { label: 'Capacidad con HP', vals: ['LAM1', 'LAM2', 'LAM3'].map(l => r.scenarioName === 'Base Only' ? calcBaseCap(l) : calcTotalCap(l)) }
+                    ])}
+                    {renderCategory('Produccion', [
+                      { label: 'Producción tn', isTons: true, vals: ['LAM1', 'LAM2', 'LAM3'].map(l => m.byMachine[l]?.tons || 0) },
+                      { label: 'Ritmo (tn/h)', vals: ['LAM1', 'LAM2', 'LAM3'].map(l => (m.byMachine[l]?.hours > 0) ? (m.byMachine[l]?.tons / m.byMachine[l]?.hours) : 0) },
+                      { label: 'Costo $/t', isMoney: true, vals: ['LAM1', 'LAM2', 'LAM3'].map(l => (m.byMachine[l]?.tons > 0) ? (m.byMachine[l]?.cost / m.byMachine[l]?.tons) : 0) }
+                    ])}
+                    {renderCategory('Montos $', [
+                      { label: 'Costo HP', isMoney: true, vals: ['LAM1', 'LAM2', 'LAM3'].map(l => calcCostoHP(l)) },
+                      { label: 'Costo Horas Extras', isMoney: true, vals: ['LAM1', 'LAM2', 'LAM3'].map(l => calcCostoExtra(l)) },
+                      { label: 'Costo de Producción', isMoney: true, isTotal: true, vals: ['LAM1', 'LAM2', 'LAM3'].map(l => m.byMachine[l]?.cost || 0) }
+                    ])}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };
+
 
 export default ComparisonDashboard;
