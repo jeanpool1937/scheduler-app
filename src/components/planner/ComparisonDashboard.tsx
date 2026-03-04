@@ -19,11 +19,14 @@ const MACHINE_COLORS: Record<string, string> = {
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-const fmtTons = (v: number) => v.toLocaleString('es-PE', { maximumFractionDigits: 0 });
-const fmt$ = (v: number) =>
-  v >= 1_000_000 ? `$${(v / 1_000_000).toFixed(2)} M`
-    : v >= 1_000 ? `$${(v / 1_000).toFixed(1)} K`
-      : `$${v.toFixed(0)}`;
+const fmtTons = (v: number) => Math.round(v).toLocaleString('es-PE');
+const fmt$ = (v: number) => {
+  const rounded = Math.round(v);
+  if (rounded >= 1_000_000) return `$${(rounded / 1_000_000).toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} M`;
+  if (rounded >= 1_000) return `$${(rounded / 1_000).toLocaleString('es-PE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} K`;
+  return `$${rounded.toLocaleString('es-PE')}`;
+};
+const fmtNum = (v: number) => Math.round(v).toLocaleString('es-PE');
 
 // ─── Props ──────────────────────────────────────────────────────────────────
 interface ComparisonProps {
@@ -250,7 +253,7 @@ const ComparisonDashboard: React.FC<ComparisonProps> = ({
                 </div>
                 <div>
                   <p className="text-[10px] font-bold text-gray-400 uppercase">Eficiencia</p>
-                  <p className="text-sm font-bold text-gray-700">${m.costPerTon.toFixed(1)} <span className="text-[10px] font-medium text-gray-400">/TN</span></p>
+                  <p className="text-sm font-bold text-gray-700">${fmtNum(m.costPerTon)} <span className="text-[10px] font-medium text-gray-400">/TN</span></p>
                 </div>
               </div>
             </div>
@@ -278,10 +281,17 @@ const ComparisonDashboard: React.FC<ComparisonProps> = ({
               }), [metrics])} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
                 <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fontWeight: 700, fill: '#6b7280' }} />
-                <YAxis axisLine={false} tickLine={false} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}K`} tick={{ fontSize: 10, fill: '#9ca3af' }} />
+                <YAxis
+                  axisLine={false}
+                  tickLine={false}
+                  tickFormatter={(v) => v >= 1_000_000 ? `$${(v / 1_000_000).toFixed(0)}M` : v >= 1_000 ? `$${(v / 1_000).toFixed(0)}K` : `$${v}`}
+                  tick={{ fontSize: 10, fill: '#9ca3af' }}
+                />
                 <Tooltip
                   cursor={{ fill: '#f8fafc' }}
-                  contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)', padding: '16px' }}
+                  contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)', padding: '16px', fontSize: '12px' }}
+                  formatter={(value: any, name: any) => [fmt$(Number(value) || 0), String(name)]}
+                  labelStyle={{ fontWeight: 700, marginBottom: '6px', color: '#111827' }}
                 />
                 <Legend iconType="circle" wrapperStyle={{ paddingTop: '20px' }} />
                 {activeScenarios.map((s) => (
