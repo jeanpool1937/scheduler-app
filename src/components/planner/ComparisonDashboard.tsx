@@ -4,7 +4,7 @@ import {
 } from 'recharts';
 import type { PlannerOptimizationResult } from '../../types/planner';
 import {
-  AlertTriangle, TrendingUp, Scale, CheckCircle2,
+  AlertTriangle, Scale, CheckCircle2,
   ArrowDown, ArrowUp, Table2, ArrowRightLeft, Zap,
   Clock, FileSpreadsheet,
   Trophy, ChevronRight, BarChart3
@@ -448,13 +448,6 @@ const ComparisonDashboard: React.FC<ComparisonProps> = ({
               })()}
             </div>
 
-            <div className="py-8 flex flex-col items-center justify-center border-2 border-dashed border-gray-100 rounded-3xl bg-gray-50/30">
-              <FileSpreadsheet className="text-[#004DB4] mb-3 opacity-20" size={40} strokeWidth={1.5} />
-              <p className="text-sm font-bold text-gray-400">Desglose avanzado disponible en reportes</p>
-              <button className="mt-4 px-8 py-2.5 bg-[#004DB4] rounded-xl shadow-lg shadow-blue-900/10 text-xs font-black text-white hover:bg-blue-700 transition-all flex items-center gap-2">
-                <TrendingUp size={14} /> ANALIZAR TODOS LOS CAMBIOS
-              </button>
-            </div>
           </div>
         </PremiumCard>
       )}

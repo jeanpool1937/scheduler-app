@@ -399,7 +399,8 @@ export const runPlannerOptimization = (
             compat[sku][machine] = ritmo > 0 ? 1 : 0;
 
             // Enrich masterDemand with descriptions from Maestro Costos
-            if (!masterDemand.has(sku) && c.descripcion) {
+            // Update if SKU is missing OR if existing description is empty
+            if (c.descripcion && (!masterDemand.has(sku) || !masterDemand.get(sku))) {
                 masterDemand.set(sku, String(c.descripcion));
             }
         });
