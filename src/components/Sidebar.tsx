@@ -6,7 +6,6 @@ import {
     Settings,
     ChevronLeft,
     ChevronRight,
-    Factory,
     Sparkles,
     BarChart3,
     Home
@@ -40,12 +39,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
         >
             {/* Header / Logo Area */}
             <div className="h-16 flex items-center px-4 border-b border-gray-100">
-                <div className="bg-[#004DB4] p-2 rounded-lg text-white shrink-0">
-                    <Factory size={20} />
+                <div className="shrink-0 overflow-hidden rounded-lg shadow-sm">
+                    <img src="/logo.png" alt="Logo PCP" className="w-9 h-9 object-cover" />
                 </div>
                 {!collapsed && (
                     <div className="ml-3 overflow-hidden whitespace-nowrap">
-                        <h1 className="font-bold text-gray-800 text-sm">Laminación</h1>
+                        <h1 className="font-bold text-gray-800 text-sm">Sistema PCP</h1>
                         <p className="text-xs text-gray-500">Aceros Arequipa</p>
                     </div>
                 )}

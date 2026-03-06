@@ -6,9 +6,11 @@
 
 La aplicación busca:
 
-1. **Maximizar la Eficiencia**: Minimizando tiempos muertos mediante el cálculo automático de cambios de medida y calidad.
-2. **Estandarizar Decisiones**: Aplicando reglas de negocio (como paradas automáticas y prioridades) de manera consistente, eliminando la variabilidad humana.
-3. **Visualizar el Futuro**: Proporcionando una línea de tiempo clara que permite anticipar necesidades de mantenimiento (cambios de anillo/canal) y materiales.
+1. **Maximizar la Eficiencia (Micro)**: Minimizando tiempos muertos mediante el cálculo automático de requerimientos para cambios de medida y calidad.
+2. **Optimización de Costos y Capacidad (Macro)**: Asignando de manera óptima la demanda mensual entre distintos laminadores mediante motores matemáticos, balanceando horas regulares, horas extra y energía punta.
+3. **Ordenamiento Inteligente**: Empleando algoritmos genéticos en la secuenciación para sugerir el mejor orden de las campañas, reduciendo setups.
+4. **Estandarizar Decisiones**: Aplicando reglas de negocio, matrices de tiempos y paradas automáticas de manera consistente, eliminando la variabilidad humana.
+5. **Visualizar el Futuro**: Proporcionando diagramas de Gantt y líneas de tiempo claras que permiten anticipar necesidades operativas de mantenimiento (anillo/canal) y materiales.
 
 ## Tecnologías Principales
 
@@ -20,34 +22,48 @@ La aplicación busca:
 
 ## Especificación Funcional
 
-### 1. Programación (Production Scheduler)
+La suite de la aplicación se compone de 6 módulos principales, diseñados para abarcar todo el ciclo de planificación, desde la asignación macro hasta la secuenciación detallada y visualización del día a día:
 
-Módulo principal para la secuenciación de órdenes.
-
+### 1. Planificador (Capacidad y Costos)
+Módulo de asignación macro y optimización económica.
 - **Funcionalidades**:
-  - Visualización y edición de la secuencia de producción.
-  - Cálculo automático de tiempos de inicio y fin.
-  - Integración paradas programadas en la secuencia.
+  - Administra el calendario de capacidades, horas disponibles y costos detallados por máquina.
+  - Optimiza el plan de producción mensual distribuyendo la agregación de demanda (SKUs) entre los laminadores disponibles.
+  - Utiliza un motor de programación lineal (LP Solver) para minimizar el costo evaluando distintos escenarios (Óptimo, Máx. Capacidad, Solo Base).
 
-### 2. Visualización (Visual Schedule)
-
-Herramienta gráfica para el análisis de la ocupación diaria.
-
+### 2. Secuenciador (Optimización de Secuencia)
+Motor inteligente exploratorio para el ordenamiento de la producción a nivel micro.
 - **Funcionalidades**:
-  - Vista diaria desglosada por horas.
-  - **Filtro Hora Punta**: Visualización exclusiva de actividades superpuestas con el horario punta (18:30 - 20:30 Lun-Vie).
-  - Reporte compacto para impresión.
+  - Optimiza el orden exacto de campañas utilizando algoritmos genéticos.
+  - Explora múltiples iteraciones para recomendar secuencias que minimizan tiempos perdidos en cambios de familia/medida y maximizan ventas en tiempo.
+  - Permite visualizar iteraciones y escoger la generación más favorable antes de aplicar los resultados al planificador.
 
-### 3. Base de Datos (Database Layout)
+### 3. Plan Mensual (Programación de Producción)
+Módulo core de gestión del programa de producción y ordenamiento manual.
+- **Funcionalidades**:
+  - Define la secuencia de los SKUs a producir, definiendo cantidades y características.
+  - Dispara el cálculo automático de los tiempos de inicio y fin para cada ítem según su ritmo.
+  - Inyecta automáticamente los tiempos de cambio de medida en la secuencia aplicando las reglas definidas.
 
-Gestión de datos maestros necesarios para la programación.
+### 4. Secuencia Diaria (Vista Gantt)
+Herramienta visual gráfica e interactiva para el análisis logístico y productivo de la ocupación en la planta.
+- **Funcionalidades**:
+  - Visualización del plan en una línea de tiempo horizontal (diagrama de Gantt), desglosada por horas y días.
+  - Muestra marcadores para las paradas programadas, cambios de formato y mantenimientos.
+  - Filtros especializados (ej. Filtro por Hora Punta: 18:30 - 20:30 Lun-Vie) o visualización por intervalos fijos.
 
-- **Maestro de Artículos**: ABM de artículos y propiedades (ej. Calidad Palanquilla).
-- **Matriz de Cambios**: Configuración de tiempos de cambio.
+### 5. Base de Datos (Gestión de Datos Maestros)
+Gestor de fuentes de información y diccionarios utilizados por todos los módulos.
+- **Funcionalidades**:
+  - *Maestro de Artículos*: Datos centrales de productos por SKU, calidad de palanquilla, etc.
+  - *Matriz de Cambios*: Tablas de tiempos requeridos para los cambios de configuración del tren al pasar de una familia a otra.
+  - Integración futura y recepción de datos (como órdenes de proceso desde SAP).
 
-### 3. Configuración (Settings Panel)
-
-- Panel para ajustes globales y preferencias.
+### 6. Configuración (Ajustes del Sistema)
+Panel para ajustes globales y reglas del programador.
+- **Funcionalidades**:
+  - Define horarios de trabajo, fines de semana y la base de los modelos de tiempos.
+  - Mantenimiento central para paradas programadas y lógicas recurrentes para cada laminador.
 
 ## Lógica de Paradas Programadas (Reglas de Negocio)
 

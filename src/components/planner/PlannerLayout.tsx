@@ -356,6 +356,7 @@ const DataPanel: React.FC = () => {
 const ResultsPanel: React.FC = () => {
     const { resultA, resultB, resultC, selectedMonth, setSelectedMonth } = usePlannerStore();
     const setActiveTab = useStore((s) => s.setActiveTab);
+    const { costos } = useCostosStore();
     const [sentMonths, setSentMonths] = useState<Record<string, boolean>>({});
 
     if (!resultA) {
@@ -470,23 +471,29 @@ const ResultsPanel: React.FC = () => {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {filteredMonth.allocations.map((a, i) => (
-                                        <tr key={i} className="border-b border-gray-50 hover:bg-gray-50/50">
-                                            <td className="py-2 px-3 font-mono text-xs">{a.skuId}</td>
-                                            <td className="py-2 px-3 text-gray-700">{a.skuDesc || '—'}</td>
-                                            <td className="py-2 px-3 text-center">
-                                                <span
-                                                    className="px-2 py-0.5 rounded text-xs font-bold text-white"
-                                                    style={{ backgroundColor: MACHINE_COLORS[a.machineId] || '#6b7280' }}
-                                                >
-                                                    {a.machineId}
-                                                </span>
-                                            </td>
-                                            <td className="py-2 px-3 text-right font-semibold">{formatTons(a.quantity)}</td>
-                                            <td className="py-2 px-3 text-right text-gray-500">{formatHours(a.timeUsed)}</td>
-                                            <td className="py-2 px-3 text-right text-gray-500">{formatMoney(a.cost)}</td>
-                                        </tr>
-                                    ))}
+                                    {filteredMonth.allocations.map((a, i) => {
+                                        const skuClean = String(a.skuId).trim().toUpperCase();
+                                        const maestro = costos.find(c => String(c.codigo_sap).trim().toUpperCase() === skuClean);
+                                        const descDisplay = (maestro && maestro.descripcion) ? maestro.descripcion : (a.skuDesc || '—');
+
+                                        return (
+                                            <tr key={i} className="border-b border-gray-50 hover:bg-gray-50/50">
+                                                <td className="py-2 px-3 font-mono text-xs">{a.skuId}</td>
+                                                <td className="py-2 px-3 text-gray-700">{descDisplay}</td>
+                                                <td className="py-2 px-3 text-center">
+                                                    <span
+                                                        className="px-2 py-0.5 rounded text-xs font-bold text-white"
+                                                        style={{ backgroundColor: MACHINE_COLORS[a.machineId] || '#6b7280' }}
+                                                    >
+                                                        {a.machineId}
+                                                    </span>
+                                                </td>
+                                                <td className="py-2 px-3 text-right font-semibold">{formatTons(a.quantity)}</td>
+                                                <td className="py-2 px-3 text-right text-gray-500">{formatHours(a.timeUsed)}</td>
+                                                <td className="py-2 px-3 text-right text-gray-500">{formatMoney(a.cost)}</td>
+                                            </tr>
+                                        )
+                                    })}
                                 </tbody>
                             </table>
                         </div>
