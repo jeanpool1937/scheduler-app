@@ -33,6 +33,21 @@ export interface DaySchedule {
   startMinute: number;
 }
 
+export interface AutoStoppageRule {
+  enabled: boolean;
+  hour: number;
+  minute: number;
+  durationMinutes: number;
+  windowHours: number;
+  minStoppageTrigger: number;
+  label: string;
+}
+
+export interface ProcessAutoStoppages {
+  ringChange: AutoStoppageRule;
+  channelChange: AutoStoppageRule;
+}
+
 export interface WorkSchedule {
   /** Modo rápido: true = 24h/7d sin restricciones */
   is24h: boolean;
@@ -122,6 +137,7 @@ export interface SequencerConfig {
     costoTC: number;
     tasaMutacion: number;
     tasaElitismo: number;
+    stockSource?: 'fin_mes' | 'actual';
   };
   lastResult: any; // Keep for backward compatibility if needed
   scenarios?: Record<string, OptimizationScenario>;
@@ -137,6 +153,7 @@ export interface ProcessData {
   holidays: string[];
   manualStops: ManualStop[];
   workSchedule: WorkSchedule;
+  autoStoppageRules: ProcessAutoStoppages;
   sequencerConfig?: SequencerConfig;
 
   // Navigation/Visual State specific to process
@@ -191,6 +208,9 @@ export interface AppState {
   updateManualStop: (id: string, stop: Partial<ManualStop>) => void;
   deleteManualStop: (id: string) => void;
   setManualStops: (stops: ManualStop[]) => void;
+
+  // Auto Stoppages
+  updateAutoStoppageRule: (type: keyof ProcessAutoStoppages, rule: Partial<AutoStoppageRule>) => void;
 
   // Work Schedule
   setWorkSchedule: (schedule: WorkSchedule) => void;

@@ -369,10 +369,11 @@ const ResultsPanel: React.FC = () => {
     }
 
     const activeResult = resultA; // Primary scenario
-    const months = activeResult.monthlyResults.map((m) => m.period);
+    const monthlyResults = activeResult.monthlyResults || [];
+    const months = monthlyResults.map((m) => m.period);
 
     const filteredMonth = selectedMonth
-        ? activeResult.monthlyResults.find((m) => m.period === selectedMonth)
+        ? monthlyResults.find((m) => m.period === selectedMonth)
         : null;
 
     const handleSendToSequencer = async (month: string) => {

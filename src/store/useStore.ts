@@ -23,7 +23,8 @@ const recalculate = (
     startDate: Date,
     holidays: string[] = [],
     manualStops: { id: string; start: Date; durationMinutes: number; label: string }[] = [],
-    workSchedule?: WorkSchedule
+    workSchedule?: WorkSchedule,
+    autoStoppageRules?: import('../types').ProcessAutoStoppages
 ): ProductionScheduleItem[] => {
     let sorted = [...items].sort((a, b) => a.sequenceOrder - b.sequenceOrder);
 
@@ -108,7 +109,7 @@ const recalculate = (
     });
 
     // Phase 2: Simulate Timeline
-    const simulatedItems = simulateSchedule(preProcessedItems, startDate, holidays, manualStops, workSchedule);
+    const simulatedItems = simulateSchedule(preProcessedItems, startDate, holidays, manualStops, workSchedule, autoStoppageRules);
 
     // Phase 3: Map back
     return simulatedItems.map(simItem => ({
@@ -184,6 +185,26 @@ const createInitialProcessData = (processId: string): ProcessData => ({
             tasaElitismo: 0.1
         },
         lastResult: null
+    },
+    autoStoppageRules: {
+        ringChange: {
+            enabled: true,
+            hour: 18,
+            minute: 30,
+            durationMinutes: 60,
+            windowHours: 7,
+            minStoppageTrigger: 60,
+            label: 'Cambio de Anillo (Auto)'
+        },
+        channelChange: {
+            enabled: true,
+            hour: 6,
+            minute: 30,
+            durationMinutes: 40,
+            windowHours: 7,
+            minStoppageTrigger: 40,
+            label: 'Cambio de Canal (Auto)'
+        }
     }
 });
 
@@ -229,6 +250,7 @@ export const useStore = create<AppState>()(
                                 programStartDate: new Date(configRes.data.program_start_date),
                                 workSchedule: configRes.data.work_schedule,
                                 holidays: configRes.data.holidays,
+                                autoStoppageRules: configRes.data.auto_stoppage_rules || state.processes[processId].autoStoppageRules,
                                 columnLabels: configRes.data.column_labels,
                                 visualTargetDate: configRes.data.visual_target_date ? new Date(configRes.data.visual_target_date) : null,
                                 sequencerConfig: configRes.data.sequencer_config || state.processes[processId].sequencerConfig
@@ -569,11 +591,11 @@ export const useStore = create<AppState>()(
                 const pid = state.activeProcessId;
                 const pData = state.processes[pid];
 
-                const { schedule, programStartDate, holidays, manualStops, workSchedule } = pData;
+                const { schedule, programStartDate, holidays, manualStops, workSchedule, autoStoppageRules } = pData;
                 const articles = useArticleStore.getState().getArticles(pid);
                 const rules = useChangeoverStore.getState().getRules(pid);
 
-                const newSchedule = recalculate(schedule, articles, rules, programStartDate, holidays, manualStops, workSchedule);
+                const newSchedule = recalculate(schedule, articles, rules, programStartDate, holidays, manualStops, workSchedule, autoStoppageRules);
 
                 set((s) => ({
                     processes: {
@@ -779,6 +801,28 @@ export const useStore = create<AppState>()(
                     }
                 }));
                 await supabase.from('scheduler_process_configs').update({ work_schedule: schedule }).eq('id', pid);
+                get().recalculateSchedule();
+            },
+
+            updateAutoStoppageRule: async (type, rule) => {
+                const pid = get().activeProcessId;
+                const currentRules = get().processes[pid].autoStoppageRules;
+                const newRules = {
+                    ...currentRules,
+                    [type]: {
+                        ...currentRules[type],
+                        ...rule
+                    }
+                };
+
+                set((state) => ({
+                    processes: {
+                        ...state.processes,
+                        [pid]: { ...state.processes[pid], autoStoppageRules: newRules }
+                    }
+                }));
+
+                await supabase.from('scheduler_process_configs').update({ auto_stoppage_rules: newRules }).eq('id', pid);
                 get().recalculateSchedule();
             },
 
@@ -993,6 +1037,13 @@ export const useStore = create<AppState>()(
         }),
         {
             name: 'scheduler-storage',
+            version: 2,
+            migrate: (persistedState: any, version: number) => {
+                if (version !== 2) {
+                    return {} as any;
+                }
+                return persistedState as any;
+            },
             partialize: (state) => ({
                 activeTab: state.activeTab,
                 activeProcessId: state.activeProcessId,

@@ -13,19 +13,7 @@ const PEAK_END_HOUR = 20;
 const PEAK_END_MIN = 30;
 const REQUIRED_HP_MINUTES = 120;
 
-// Cambio de Anillo (Ring Change)
-const RING_CHANGE_HOUR = 18;
-const RING_CHANGE_MIN = 30;
-const RING_CHANGE_DURATION = 60;
-const RING_CHANGE_WINDOW_HOURS = 7;
-const RING_CHANGE_MIN_STOPPAGE = 60;
 
-// Cambio de Canal (Channel Change)
-const CHANNEL_CHANGE_HOUR = 6;
-const CHANNEL_CHANGE_MIN = 30;
-const CHANNEL_CHANGE_DURATION = 40;
-const CHANNEL_CHANGE_WINDOW_HOURS = 7;
-const CHANNEL_CHANGE_MIN_STOPPAGE = 40;
 
 // Convergencia
 const MAX_ITERATIONS = 200;
@@ -323,7 +311,6 @@ const buildBaseline = (
     let cursor = new Date(globalStart);
     cursor.setSeconds(0, 0);
 
-    // Si el inicio global cae fuera de turno, avanzar primero
     if (ws && !ws.is24h) {
         const gap = advancePastOffShift(cursor, ws);
         if (gap) {
@@ -335,94 +322,63 @@ const buildBaseline = (
         const itemStart = new Date(cursor);
         const segments: ScheduleSegment[] = [];
 
-        // Helper: insertar off_shift si cursor está fuera de turno
-        const insertOffShiftIfNeeded = () => {
-            if (!ws || ws.is24h) return;
-            const gap = advancePastOffShift(cursor, ws);
-            if (gap) {
-                segments.push(createSegment('off_shift', cursor, gap.gapMinutes, 'Fuera de Turno'));
-                cursor = gap.nextStart;
+        const unshiftSegment = (type: SegmentType, duration: number, desc?: string) => {
+            let remaining = duration;
+            while (remaining > 0.01) {
+                if (ws && !ws.is24h) {
+                    const gap = advancePastOffShift(cursor, ws);
+                    if (gap) {
+                        segments.push(createSegment('off_shift', cursor, gap.gapMinutes, 'Fuera de Turno'));
+                        cursor = gap.nextStart;
+                    }
+
+                    const minLeft = getMinutesUntilShiftEnd(cursor, ws);
+                    const chunk = Math.min(remaining, minLeft);
+
+                    if (chunk > 0.01) {
+                        segments.push(createSegment(type, cursor, chunk, desc));
+                        cursor = addMinutes(cursor, chunk);
+                        remaining -= chunk;
+                    } else {
+                        cursor = addMinutes(cursor, 0.1);
+                    }
+                } else {
+                    segments.push(createSegment(type, cursor, remaining, desc));
+                    cursor = addMinutes(cursor, remaining);
+                    remaining = 0;
+                }
             }
         };
 
-        // Verificar off_shift al inicio de cada item
-        insertOffShiftIfNeeded();
-
-        // 1. Paradas manuales (forced_stop)
         if (item.stoppages) {
             Object.entries(item.stoppages).forEach(([stopId, duration]) => {
                 if (duration > 0) {
-                    segments.push(createSegment('forced_stop', cursor, duration, `Parada (ID: ${stopId})`));
-                    cursor = addMinutes(cursor, duration);
-                    insertOffShiftIfNeeded();
+                    unshiftSegment('forced_stop', duration, `Parada (ID: ${stopId})`);
                 }
             });
         }
 
-        // 2. Ring/Channel manuales (desde datos importados, NO automáticos)
         if (item.ringChangeMinutes && item.ringChangeMinutes > 0) {
-            segments.push(createSegment('ring_change', cursor, item.ringChangeMinutes, 'Cambio Anillo (Manual)'));
-            cursor = addMinutes(cursor, item.ringChangeMinutes);
-            insertOffShiftIfNeeded();
+            unshiftSegment('ring_change', item.ringChangeMinutes, 'Cambio Anillo (Manual)');
         }
         if (item.channelChangeMinutes && item.channelChangeMinutes > 0) {
-            segments.push(createSegment('channel_change', cursor, item.channelChangeMinutes, 'Cambio Canal (Manual)'));
-            cursor = addMinutes(cursor, item.channelChangeMinutes);
-            insertOffShiftIfNeeded();
+            unshiftSegment('channel_change', item.channelChangeMinutes, 'Cambio Canal (Manual)');
         }
 
-        // 3. Paradas Tipo A (inter-orden) en orden de prioridad
-        // R1: Cambio de Medida → cancela R2 y R3
         if (item.changeoverMinutes && item.changeoverMinutes > 0) {
-            segments.push(createSegment('changeover', cursor, item.changeoverMinutes));
-            cursor = addMinutes(cursor, item.changeoverMinutes);
-            insertOffShiftIfNeeded();
+            unshiftSegment('changeover', item.changeoverMinutes);
 
-            // R4: Acierto/Calibración (siempre con cambio de medida)
             if (item.adjustmentMinutes && item.adjustmentMinutes > 0) {
-                segments.push(createSegment('adjustment', cursor, item.adjustmentMinutes));
-                cursor = addMinutes(cursor, item.adjustmentMinutes);
-                insertOffShiftIfNeeded();
+                unshiftSegment('adjustment', item.adjustmentMinutes);
             }
         } else if (item.qualityChangeMinutes && item.qualityChangeMinutes > 0) {
-            // R2: Cambio de Calidad (solo si NO hubo cambio de medida)
-            segments.push(createSegment('quality_change', cursor, item.qualityChangeMinutes));
-            cursor = addMinutes(cursor, item.qualityChangeMinutes);
-            insertOffShiftIfNeeded();
+            unshiftSegment('quality_change', item.qualityChangeMinutes);
         } else if (item.stopChangeMinutes && item.stopChangeMinutes > 0) {
-            // R3: Cambio de Tope (solo si NO hubo cambio de medida NI calidad)
-            segments.push(createSegment('stop_change', cursor, item.stopChangeMinutes));
-            cursor = addMinutes(cursor, item.stopChangeMinutes);
-            insertOffShiftIfNeeded();
+            unshiftSegment('stop_change', item.stopChangeMinutes);
         }
 
-        // 4. Producción - dividir por turnos si es necesario
         if (item.productionTimeMinutes > 0) {
-            let remainingProd = item.productionTimeMinutes;
-
-            while (remainingProd > 0.01) {
-                insertOffShiftIfNeeded();
-
-                if (ws && !ws.is24h) {
-                    // Calcular cuánto queda del turno actual
-                    const minutesLeft = getMinutesUntilShiftEnd(cursor, ws);
-                    const chunk = Math.min(remainingProd, minutesLeft);
-
-                    if (chunk > 0.01) {
-                        segments.push(createSegment('production', cursor, chunk));
-                        cursor = addMinutes(cursor, chunk);
-                        remainingProd -= chunk;
-                    } else {
-                        // No queda tiempo en este turno, insertaremos off_shift en la próxima iteración
-                        cursor = addMinutes(cursor, 0.1); // Pequeño avance para salir del límite
-                    }
-                } else {
-                    // 24h continuo: un solo segmento de producción
-                    segments.push(createSegment('production', cursor, remainingProd));
-                    cursor = addMinutes(cursor, remainingProd);
-                    remainingProd = 0;
-                }
-            }
+            unshiftSegment('production', item.productionTimeMinutes);
         }
 
         return {
@@ -538,7 +494,8 @@ const findInsertionPoints = (
     timelineStart: Date,
     timelineEnd: Date,
     holidays: string[],
-    manualStops: { id: string; start: Date; durationMinutes: number; label: string }[] = []
+    manualStops: { id: string; start: Date; durationMinutes: number; label: string }[] = [],
+    autoStoppages?: import('../types').ProcessAutoStoppages
 ): InsertionPoint[] => {
     const insertions: InsertionPoint[] = [];
 
@@ -559,49 +516,53 @@ const findInsertionPoints = (
         let proposedChannelChange: InsertionPoint | null = null;
 
         // ------------------------------------------------------------
-        // PASO 1: R6 - Cambio de Canal (06:30)
+        // PASO 1: R6 - Cambio de Canal
         // ------------------------------------------------------------
-        const channelTime = setMinutes(setHours(new Date(currentDay), CHANNEL_CHANGE_HOUR), CHANNEL_CHANGE_MIN);
-        channelTime.setSeconds(0, 0);
+        if (autoStoppages?.channelChange?.enabled) {
+            const rule = autoStoppages.channelChange;
+            const channelTime = setMinutes(setHours(new Date(currentDay), rule.hour), rule.minute);
+            channelTime.setSeconds(0, 0);
 
-        if (!isBefore(channelTime, timelineStart) && !isAfter(channelTime, timelineEnd)) {
-            // Solo si NO existe ya uno en el timeline
-            if (!hasSegmentAtTime(flat, 'channel_change', channelTime)) {
-                // Verificar ventana de 7 horas atrás
-                const windowStart = addMinutes(channelTime, -CHANNEL_CHANGE_WINDOW_HOURS * 60);
-                const stoppageInWindow = calculateStoppageInWindow(flat, windowStart, channelTime);
+            if (!isBefore(channelTime, timelineStart) && !isAfter(channelTime, timelineEnd)) {
+                // Solo si NO existe ya uno en el timeline
+                if (!hasSegmentAtTime(flat, 'channel_change', channelTime)) {
+                    // Verificar ventana
+                    const windowStart = addMinutes(channelTime, -rule.windowHours * 60);
+                    const stoppageInWindow = calculateStoppageInWindow(flat, windowStart, channelTime);
 
-                if (stoppageInWindow < CHANNEL_CHANGE_MIN_STOPPAGE) {
-                    proposedChannelChange = {
-                        timestamp: new Date(channelTime),
-                        type: 'channel_change',
-                        durationMinutes: CHANNEL_CHANGE_DURATION,
-                    };
-                    insertions.push(proposedChannelChange);
+                    if (stoppageInWindow < rule.minStoppageTrigger) {
+                        proposedChannelChange = {
+                            timestamp: new Date(channelTime),
+                            type: 'channel_change',
+                            durationMinutes: rule.durationMinutes,
+                        };
+                        insertions.push(proposedChannelChange);
+                    }
                 }
             }
         }
 
         // ------------------------------------------------------------
-        // PASO 2: R5 - Cambio de Anillo (18:30)
+        // PASO 2: R5 - Cambio de Anillo
         // ------------------------------------------------------------
-        const ringTime = setMinutes(setHours(new Date(currentDay), RING_CHANGE_HOUR), RING_CHANGE_MIN);
-        ringTime.setSeconds(0, 0);
+        if (autoStoppages?.ringChange?.enabled) {
+            const rule = autoStoppages.ringChange;
+            const ringTime = setMinutes(setHours(new Date(currentDay), rule.hour), rule.minute);
+            ringTime.setSeconds(0, 0);
 
-        if (!isBefore(ringTime, timelineStart) && !isAfter(ringTime, timelineEnd)) {
-            if (!hasSegmentAtTime(flat, 'ring_change', ringTime)) {
-                const windowStart = addMinutes(ringTime, -RING_CHANGE_WINDOW_HOURS * 60);
-                // NOTA: Aquí idealmente deberíamos considerar 'proposedChannelChange' si cayera en ventana,
-                // pero 06:30 está lejos de 11:30-18:30, así que no afecta.
-                const stoppageInWindow = calculateStoppageInWindow(flat, windowStart, ringTime);
+            if (!isBefore(ringTime, timelineStart) && !isAfter(ringTime, timelineEnd)) {
+                if (!hasSegmentAtTime(flat, 'ring_change', ringTime)) {
+                    const windowStart = addMinutes(ringTime, -rule.windowHours * 60);
+                    const stoppageInWindow = calculateStoppageInWindow(flat, windowStart, ringTime);
 
-                if (stoppageInWindow < RING_CHANGE_MIN_STOPPAGE) {
-                    proposedRingChange = {
-                        timestamp: new Date(ringTime),
-                        type: 'ring_change',
-                        durationMinutes: RING_CHANGE_DURATION,
-                    };
-                    insertions.push(proposedRingChange);
+                    if (stoppageInWindow < rule.minStoppageTrigger) {
+                        proposedRingChange = {
+                            timestamp: new Date(ringTime),
+                            type: 'ring_change',
+                            durationMinutes: rule.durationMinutes,
+                        };
+                        insertions.push(proposedRingChange);
+                    }
                 }
             }
         }
@@ -811,23 +772,64 @@ const insertStopIntoTimeline = (
 
 /**
  * Reconstruir timeline: recalcular todos los start/end secuencialmente
- * manteniendo las duraciones de cada segmento.
+ * manteniendo las duraciones de cada segmento y aplicando paradas fuera de turno (off_shift).
  */
-const rebuildTimeline = (items: EnhancedScheduleItem[]): void => {
+const rebuildTimeline = (items: EnhancedScheduleItem[], ws?: WorkSchedule): void => {
     if (items.length === 0) return;
 
     let cursor = new Date(items[0].computedStart);
 
+    if (ws && !ws.is24h) {
+        const gap = advancePastOffShift(cursor, ws);
+        if (gap) cursor = gap.nextStart;
+    }
+
     for (const item of items) {
         item.computedStart = new Date(cursor);
 
-        for (const seg of item.segments) {
-            // Skip off_shift segments during rebuild - they'll be in the right place
-            seg.start = new Date(cursor);
-            seg.end = addMinutes(cursor, seg.durationMinutes);
-            cursor = new Date(seg.end);
+        const realSegments = item.segments.filter(s => s.type !== 'off_shift');
+        const newSegments: ScheduleSegment[] = [];
+
+        for (const seg of realSegments) {
+            let remaining = seg.durationMinutes;
+
+            while (remaining > 0.01) {
+                if (ws && !ws.is24h) {
+                    const gap = advancePastOffShift(cursor, ws);
+                    if (gap) {
+                        newSegments.push(createSegment('off_shift', cursor, gap.gapMinutes, 'Fuera de Turno'));
+                        cursor = gap.nextStart;
+                    }
+
+                    const minutesLeft = getMinutesUntilShiftEnd(cursor, ws);
+                    const chunk = Math.min(remaining, minutesLeft);
+
+                    if (chunk > 0.01) {
+                        newSegments.push({
+                            ...seg,
+                            start: new Date(cursor),
+                            end: addMinutes(cursor, chunk),
+                            durationMinutes: chunk
+                        });
+                        cursor = addMinutes(cursor, chunk);
+                        remaining -= chunk;
+                    } else {
+                        cursor = addMinutes(cursor, 0.1);
+                    }
+                } else {
+                    newSegments.push({
+                        ...seg,
+                        start: new Date(cursor),
+                        end: addMinutes(cursor, remaining),
+                        durationMinutes: remaining
+                    });
+                    cursor = addMinutes(cursor, remaining);
+                    remaining = 0;
+                }
+            }
         }
 
+        item.segments = newSegments;
         item.computedEnd = new Date(cursor);
     }
 };
@@ -838,7 +840,9 @@ const rebuildTimeline = (items: EnhancedScheduleItem[]): void => {
 const insertTypeBCStops = (
     items: EnhancedScheduleItem[],
     holidays: string[],
-    manualStops: { id: string; start: Date; durationMinutes: number; label: string }[]
+    manualStops: { id: string; start: Date; durationMinutes: number; label: string }[],
+    ws?: WorkSchedule,
+    autoStoppages?: import('../types').ProcessAutoStoppages
 ): EnhancedScheduleItem[] => {
     let iteration = 0;
     let changed = true;
@@ -855,7 +859,7 @@ const insertTypeBCStops = (
         const timelineEnd = items[items.length - 1].computedEnd;
 
         // Encontrar todos los puntos de inserción necesarios
-        const insertions = findInsertionPoints(flat, timelineStart, timelineEnd, holidays, manualStops);
+        const insertions = findInsertionPoints(flat, timelineStart, timelineEnd, holidays, manualStops, autoStoppages);
 
         if (insertions.length === 0) break;
 
@@ -872,7 +876,7 @@ const insertTypeBCStops = (
 
         if (changed) {
             // Reconstruir timeline completo con nuevos tiempos
-            rebuildTimeline(items);
+            rebuildTimeline(items, ws);
         }
     }
 
@@ -892,7 +896,8 @@ export const simulateSchedule = (
     globalStart: Date,
     holidays: string[] = [],
     manualStops: { id: string; start: Date; durationMinutes: number; label: string }[] = [],
-    workSchedule?: WorkSchedule
+    workSchedule?: WorkSchedule,
+    autoStoppages?: import('../types').ProcessAutoStoppages
 ): EnhancedScheduleItem[] => {
     if (items.length === 0) return [];
 
@@ -900,7 +905,7 @@ export const simulateSchedule = (
     const baseline = buildBaseline(items, globalStart, workSchedule);
 
     // Fase 2: Insertar paradas Tipo B/C iterativamente hasta convergencia
-    const result = insertTypeBCStops(baseline, holidays, manualStops);
+    const result = insertTypeBCStops(baseline, holidays, manualStops, workSchedule, autoStoppages);
 
     return result;
 };

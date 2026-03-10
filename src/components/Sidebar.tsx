@@ -40,7 +40,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
             {/* Header / Logo Area */}
             <div className="h-16 flex items-center px-4 border-b border-gray-100">
                 <div className="shrink-0 overflow-hidden rounded-lg shadow-sm">
-                    <img src="/logo.png" alt="Logo PCP" className="w-9 h-9 object-cover" />
+                    <img src={`${import.meta.env.BASE_URL}logo.png`} alt="Logo PCP" className="w-9 h-9 object-cover" />
                 </div>
                 {!collapsed && (
                     <div className="ml-3 overflow-hidden whitespace-nowrap">

@@ -7,6 +7,7 @@ import { Download, Database, Upload } from 'lucide-react';
 import { HolidayConfig } from './HolidayConfig';
 import { ManualStopsConfig } from './ManualStopsConfig';
 import { WorkScheduleConfig } from './WorkScheduleConfig';
+import { AutoStoppageConfig } from './AutoStoppageConfig';
 
 // Error Boundary para capturar crashes en componentes hijos
 class ComponentErrorBoundary extends React.Component<
@@ -231,6 +232,11 @@ export const SettingsPanel: React.FC = () => {
                 {/* Work Schedule Configuration */}
                 <ComponentErrorBoundary fallbackLabel="Esquema de Trabajo">
                     <WorkScheduleConfig />
+                </ComponentErrorBoundary>
+
+                {/* Auto Stoppages Configuration */}
+                <ComponentErrorBoundary fallbackLabel="Paradas Programadas">
+                    <AutoStoppageConfig />
                 </ComponentErrorBoundary>
 
                 {/* Holidays Configuration */}

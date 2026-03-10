@@ -49,7 +49,7 @@ const PremiumCard: React.FC<{ title: string; subtitle?: string; icon: React.Reac
       </div>
       <div>
         <h3 className="text-sm font-bold text-gray-900 tracking-tight">{title}</h3>
-        {subtitle && <p className="text-[11px] text-gray-400 font-medium uppercase tracking-wider">{subtitle}</p>}
+        {subtitle && <div className="text-[11px] text-gray-400 font-medium uppercase tracking-wider">{subtitle}</div>}
       </div>
     </div>
     <div className="p-6">{children}</div>
@@ -87,12 +87,12 @@ const ComparisonDashboard: React.FC<ComparisonProps> = ({
   // ── Métricas por escenario ──────────────────────────────────────────────
   const metrics = activeScenarios.map((s) => {
     const r = s.data!;
-    let allocs = r.allocations;
-    let cost = r.totalCost;
+    let allocs = r.allocations || [];
+    let cost = r.totalCost || 0;
     let bkdown = r.breakdown || { productionCost: 0, overtimeCost: 0, peakPowerCost: 0 };
-    let unmet = r.unmetDemand;
-    let usage = r.machineUsage;
-    let baseCap = r.baseCapacity;
+    let unmet = r.unmetDemand || [];
+    let usage = r.machineUsage || {};
+    let baseCap = r.baseCapacity || {};
 
     if (selectedPeriod !== 'all' && r.monthlyResults) {
       const md = r.monthlyResults.find((mr: any) => mr.period === selectedPeriod);
@@ -382,9 +382,9 @@ const ComparisonDashboard: React.FC<ComparisonProps> = ({
                 const buildPivot = (data: PlannerOptimizationResult) => {
                   const diffs = new Set<string>();
                   const mapBase = new Map<string, string>();
-                  activeScenarios.find(s => s.id === baseId)?.data?.allocations.forEach((a: any) => mapBase.set(`${a.period}::${a.skuId}`, a.machineId));
+                  (activeScenarios.find(s => s.id === baseId)?.data?.allocations || []).forEach((a: any) => mapBase.set(`${a.period}::${a.skuId}`, a.machineId));
                   const mapTarget = new Map<string, string>();
-                  activeScenarios.find(s => s.id === targetId)?.data?.allocations.forEach((a: any) => mapTarget.set(`${a.period}::${a.skuId}`, a.machineId));
+                  (activeScenarios.find(s => s.id === targetId)?.data?.allocations || []).forEach((a: any) => mapTarget.set(`${a.period}::${a.skuId}`, a.machineId));
 
                   const allSkus = new Set([...Array.from(mapBase.keys()), ...Array.from(mapTarget.keys())]);
                   allSkus.forEach(key => {
@@ -392,7 +392,7 @@ const ComparisonDashboard: React.FC<ComparisonProps> = ({
                   });
 
                   const pivot: any = {};
-                  data.allocations.filter((a: any) => diffs.has(a.skuId)).forEach((a: any) => {
+                  (data.allocations || []).filter((a: any) => diffs.has(a.skuId)).forEach((a: any) => {
                     if (!pivot[a.skuId]) pivot[a.skuId] = { desc: a.skuDesc, machines: {} };
                     pivot[a.skuId].machines[a.machineId] = (pivot[a.skuId].machines[a.machineId] || 0) + a.quantity;
                   });
@@ -409,9 +409,9 @@ const ComparisonDashboard: React.FC<ComparisonProps> = ({
                   const hiddenCount = allSkuKeys.length - 5;
                   return (
                     <div className="bg-gray-50/50 rounded-2xl border border-gray-100 p-4">
-                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                      <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
                         <div className="w-2 h-2 rounded-full" style={{ backgroundColor: sc.color }} /> {sc.name}
-                      </p>
+                      </div>
                       <div className="space-y-2">
                         {visibleKeys.map(skuId => (
                           <div key={skuId} className="flex items-center justify-between text-xs bg-white p-2 rounded-lg shadow-sm border border-gray-100/50 gap-2">

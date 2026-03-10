@@ -245,7 +245,8 @@ export const ProductionSequencer: React.FC = () => {
         costoVP: 100,
         costoTC: 5000,
         tasaMutacion: 0.15,
-        tasaElitismo: 0.1
+        tasaElitismo: 0.1,
+        stockSource: 'fin_mes' as 'fin_mes' | 'actual'
     });
 
     const hasRestoredRef = useRef(false);
@@ -274,19 +275,21 @@ export const ProductionSequencer: React.FC = () => {
     // Refresh live stock/sales data whenever sapData arrives or draftItems change their SKU set
     // Using a stable key so we don't re-run on every minor draft edit, only on new SKU loads
     const lastRefreshedSkuSetRef = useRef<string>('');
+    const lastRefreshedStockSourceRef = useRef<string>('');
     useEffect(() => {
         if (Object.keys(sapData).length === 0) return; // Wait for SAP data
         if (draftItems.length === 0) return;            // Nothing to update
 
         // Build a stable key from current SKU set to avoid re-running on quantity/order changes
         const currentSkuSet = draftItems.map(d => d.skuCode).sort().join(',');
-        if (lastRefreshedSkuSetRef.current === currentSkuSet) return; // Same SKUs, no need to re-enrich
+        if (lastRefreshedSkuSetRef.current === currentSkuSet && lastRefreshedStockSourceRef.current === params.stockSource) return; // Same SKUs, no need to re-enrich
         lastRefreshedSkuSetRef.current = currentSkuSet;
+        lastRefreshedStockSourceRef.current = params.stockSource;
 
         setDraftItems(prev => prev.map(item => {
             const sapItem = sapData[item.skuCode];
             if (!sapItem) return item; // No SAP data → keep whatever is cached
-            const freshStock = sapItem.stock_fin_mes;
+            const freshStock = params.stockSource === 'actual' ? sapItem.stock_hoy : sapItem.stock_fin_mes;
             const freshVentaDiaria = sapItem.venta_diaria;
             const freshDiasStock = freshVentaDiaria > 0 ? freshStock / freshVentaDiaria : 999;
             return {
@@ -297,7 +300,7 @@ export const ProductionSequencer: React.FC = () => {
                 poMes: sapItem.po_mes_actual,
             };
         }));
-    }, [sapData, draftItems]);
+    }, [sapData, draftItems, params.stockSource]);
 
     // RESTORE config from store when loaded or process changes
     useEffect(() => {
@@ -311,7 +314,7 @@ export const ProductionSequencer: React.FC = () => {
 
         // Apply config explicitly
         setDraftItems(sequencerConfigFromStore.draftItems || []);
-        if (sequencerConfigFromStore.params) setParams(sequencerConfigFromStore.params);
+        if (sequencerConfigFromStore.params) setParams({ ...sequencerConfigFromStore.params, stockSource: sequencerConfigFromStore.params.stockSource || 'fin_mes' });
         if (sequencerConfigFromStore.scenarios) setScenarios(sequencerConfigFromStore.scenarios);
         if (sequencerConfigFromStore.activeScenarioId) setActiveScenarioId(sequencerConfigFromStore.activeScenarioId as any);
     }, [sequencerIsLoaded, sequencerConfigFromStore, activeProcessId]);
@@ -376,7 +379,7 @@ export const ProductionSequencer: React.FC = () => {
             const pace = art?.ritmoTH || 0;
             const productionTimeDays = pace > 0 ? (cleanQty / pace) / 24 : 0;
             const dailySale = sapItem?.venta_diaria || 0;
-            const stock = sapItem?.stock_fin_mes || 0;
+            const stock = params.stockSource === 'actual' ? (sapItem?.stock_hoy || 0) : (sapItem?.stock_fin_mes || 0);
             const daysStock = dailySale > 0 ? stock / dailySale : 999;
 
             return {
@@ -648,6 +651,16 @@ export const ProductionSequencer: React.FC = () => {
                         <div className="grid grid-cols-2 gap-3">
                             <div><span className="text-[10px] font-bold text-gray-400 uppercase">Población</span><input type="number" value={params.poblacion} onChange={(e) => setParams({ ...params, poblacion: parseInt(e.target.value) })} className="mt-1 block w-full px-3 py-1.5 bg-gray-50 border border-gray-200 rounded text-sm outline-none" /></div>
                             <div><span className="text-[10px] font-bold text-gray-400 uppercase">Generaciones</span><input type="number" value={params.generaciones} onChange={(e) => setParams({ ...params, generaciones: parseInt(e.target.value) })} className="mt-1 block w-full px-3 py-1.5 bg-gray-50 border border-gray-200 rounded text-sm outline-none" /></div>
+                            <div className="col-span-2">
+                                <span className="text-[10px] font-bold text-gray-400 uppercase flex justify-between">
+                                    Origen de Stock
+                                    <span className="text-blue-500">{params.stockSource === 'actual' ? '(Hoy)' : '(Proyectado)'}</span>
+                                </span>
+                                <select value={params.stockSource || 'fin_mes'} onChange={(e) => setParams({ ...params, stockSource: e.target.value as 'fin_mes' | 'actual' })} className="mt-1 block w-full px-3 py-1.5 bg-gray-50 border border-gray-200 rounded text-sm outline-none font-bold text-slate-700 focus:ring-2 focus:ring-blue-100 transition-shadow transition-colors">
+                                    <option value="fin_mes">Stock Fin de Mes</option>
+                                    <option value="actual">Stock Actual</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
                     <div className="space-y-4">
@@ -890,7 +903,7 @@ export const ProductionSequencer: React.FC = () => {
                                         <th className="px-6 py-3">SKU</th>
                                         <th className="px-6 py-3">Descripción</th>
                                         <th className="px-6 py-3 text-right">Cant. (Tn)</th>
-                                        <th className="px-6 py-3 text-right">Stock (Fin Mes)</th>
+                                        <th className="px-6 py-3 text-right">Stock {params.stockSource === 'actual' ? '(Hoy)' : '(Fin Mes)'}</th>
                                         <th className="px-6 py-3 text-right">Venta Diaria</th>
                                         <th className="px-6 py-3 text-right">Días Stock</th>
                                         <th className="px-6 py-3 text-right">Días Fab.</th>

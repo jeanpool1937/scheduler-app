@@ -153,6 +153,13 @@ export const usePlannerStore = create<PlannerState>()(
         }),
         {
             name: 'planner-store',
+            version: 2, // Bumping version clears legacy poisoned localStorage
+            migrate: (persistedState: any, version: number) => {
+                if (version !== 2) {
+                    return {} as any;
+                }
+                return persistedState as any;
+            },
             partialize: (state) => ({
                 machineCosts: state.machineCosts,
                 capacitySchedule: state.capacitySchedule,

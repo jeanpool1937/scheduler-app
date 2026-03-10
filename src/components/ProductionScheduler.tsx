@@ -9,6 +9,7 @@ import { es } from 'date-fns/locale';
 import { Plus, Trash2, CalendarClock, Undo2, RotateCcw, Eye, Save, Columns } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { TargetDateModal } from './TargetDateModal';
+import { ProductionGanttWrapper } from './ProductionGantt';
 
 // Clave para guardar el estado de columnas en localStorage
 const COLUMN_STATE_KEY = 'scheduler-column-state';
@@ -30,11 +31,11 @@ export const ProductionScheduler: React.FC = () => {
     }
 
     const {
-        schedule,
-        stoppageConfigs,
-        programStartDate,
-        scheduleHistory,
-        columnLabels
+        schedule = [],
+        stoppageConfigs = [],
+        programStartDate = new Date(),
+        scheduleHistory = [],
+        columnLabels = {}
     } = processData;
 
     const {
@@ -169,6 +170,7 @@ export const ProductionScheduler: React.FC = () => {
 
     // Traffic Light System Logic
     const getRowStatus = useCallback((data: ProductionScheduleItem) => {
+        if (!data) return 'normal';
         const totalStoppages = data.stoppages ? Object.values(data.stoppages).reduce((a, b) => a + (b || 0), 0) : 0;
         const maintenance = (data.segments || []).filter(s => s.type === 'maintenance_hp').reduce((a, b) => a + b.durationMinutes, 0);
 
@@ -891,11 +893,14 @@ export const ProductionScheduler: React.FC = () => {
         cols.push({
             headerName: '',
             width: 60,
-            cellRenderer: (params: any) => (
-                <button onClick={() => deleteScheduleItem(params.data.id)} className="text-gray-400 hover:text-red-600">
-                    <Trash2 size={16} />
-                </button>
-            )
+            cellRenderer: (params: any) => {
+                if (!params.data || !params.data.id) return null;
+                return (
+                    <button onClick={() => deleteScheduleItem(params.data.id)} className="text-gray-400 hover:text-red-600">
+                        <Trash2 size={16} />
+                    </button>
+                );
+            }
         });
 
         return cols;
@@ -1101,7 +1106,11 @@ export const ProductionScheduler: React.FC = () => {
                                 <input
                                     type="datetime-local"
                                     className="bg-transparent text-sm font-bold text-gray-900 outline-none w-36 font-mono"
-                                    value={programStartDate ? format(new Date(programStartDate), "yyyy-MM-dd'T'HH:mm") : ''}
+                                    value={(() => {
+                                        try {
+                                            return programStartDate ? format(new Date(programStartDate), "yyyy-MM-dd'T'HH:mm") : '';
+                                        } catch (e) { return ''; }
+                                    })()}
                                     onChange={handleDateChange}
                                 />
                             </div>
@@ -1110,7 +1119,11 @@ export const ProductionScheduler: React.FC = () => {
                                 <div className="flex items-center gap-2 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-100 shadow-sm">
                                     <span className="text-xs font-semibold text-blue-500 uppercase tracking-wide">Fin Est.</span>
                                     <span className="text-sm font-bold text-blue-900 font-mono">
-                                        {format(programEndDate, 'EEE dd/MM HH:mm', { locale: es })}
+                                        {(() => {
+                                            try {
+                                                return format(new Date(programEndDate), 'EEE dd/MM HH:mm', { locale: es });
+                                            } catch (e) { return '---'; }
+                                        })()}
                                     </span>
                                 </div>
                             )}
@@ -1221,7 +1234,7 @@ export const ProductionScheduler: React.FC = () => {
                 </div>
             </div>
 
-            <div className="flex-1 ag-theme-quartz">
+            <div className="flex-1 ag-theme-quartz min-h-[400px]">
                 <AgGridReact
                     ref={gridRef}
                     rowData={schedule}
@@ -1237,7 +1250,7 @@ export const ProductionScheduler: React.FC = () => {
                     onCellMouseOver={onCellMouseOver}
                     preventDefaultOnContextMenu={true}
                     animateRows={true}
-                    getRowId={(params) => params.data.id}
+                    getRowId={(params) => params.data?.id || `pinned_${Math.random()}`}
                     pinnedBottomRowData={pinnedBottomRowData}
                     onGridReady={onGridReady}
                     onCellDoubleClicked={onCellDoubleClicked}
@@ -1251,6 +1264,11 @@ export const ProductionScheduler: React.FC = () => {
                     onColumnVisible={onColumnStateChanged}
                     onColumnPinned={onColumnStateChanged}
                 />
+            </div>
+
+            {/* Gantt Chart Selection */}
+            <div className="shrink-0 bg-gray-50/30 border-t border-gray-200">
+                <ProductionGanttWrapper schedule={schedule} programStartDate={programStartDate} />
             </div>
 
             {/* Modal for editing column header */}
