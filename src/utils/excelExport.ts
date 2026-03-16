@@ -33,21 +33,26 @@ const createStyles = () => {
 
 // --- Pestaña 1: Secuencia Diaria (Programación Visual) ---
 const buildSecuenciaDiariaSheet = (workbook: ExcelJS.Workbook, data: ExportData) => {
-    const { headerFont, headerFill, subHeaderFill, borderStyle, centerStyle, rightStyle, leftStyle } = createStyles();
+    const { headerFont, headerFill, borderStyle, centerStyle, rightStyle, leftStyle } = createStyles();
 
     const sheet = workbook.addWorksheet('Secuencia Diaria', {
         views: [{ showGridLines: false }]
     });
 
-    // Columnas
+    // Columnas actualizadas
     sheet.columns = [
+        { key: 'date', width: 14, style: { alignment: centerStyle } },
         { key: 'time', width: 15, style: { alignment: centerStyle } },
         { key: 'duration', width: 8, style: { alignment: centerStyle } },
         { key: 'sku', width: 15, style: { alignment: leftStyle } },
-        { key: 'description', width: 50, style: { alignment: leftStyle } },
-        { key: 'prodHours', width: 10, style: { alignment: rightStyle, numFmt: '0.0' } },
-        { key: 'stopHours', width: 12, style: { alignment: rightStyle, numFmt: '0.0' } },
-        { key: 'tonnage', width: 10, style: { alignment: rightStyle, numFmt: '#,##0' } },
+        { key: 'type', width: 15, style: { alignment: centerStyle } },
+        { key: 'description', width: 45, style: { alignment: leftStyle } },
+        { key: 'prodHours', width: 10, style: { alignment: rightStyle, numFmt: '0.00' } },
+        { key: 'stopHours', width: 12, style: { alignment: rightStyle, numFmt: '0.00' } },
+        { key: 'tonnage', width: 10, style: { alignment: rightStyle, numFmt: '#,##0.0' } },
+        { key: 'dayTotalProd', width: 12, style: { alignment: centerStyle, numFmt: '0.0 "h"' } },
+        { key: 'dayTotalStop', width: 14, style: { alignment: centerStyle, numFmt: '0.0 "h"' } },
+        { key: 'dayTotalTon', width: 12, style: { alignment: centerStyle, numFmt: '#,##0 "T"' } },
     ];
 
     // Fila 1: Encabezado mensual
@@ -58,7 +63,7 @@ const buildSecuenciaDiariaSheet = (workbook: ExcelJS.Workbook, data: ExportData)
     const monthlyRow = sheet.getRow(1);
     monthlyRow.values = [
         `PROGRAMACIÓN MENSUAL: ${monthTitle}`,
-        '', '', '',
+        '', '', '', '', '',
         data.monthlyTotals.productionMinutes / 60,
         data.monthlyTotals.stoppageMinutes / 60,
         data.monthlyTotals.tonnage
@@ -69,16 +74,20 @@ const buildSecuenciaDiariaSheet = (workbook: ExcelJS.Workbook, data: ExportData)
         cell.font = { ...headerFont, size: 12 };
         cell.fill = headerFill;
         cell.border = borderStyle;
-        cell.alignment = colNumber <= 4 ? leftStyle : rightStyle;
-        if (colNumber === 5 || colNumber === 6) cell.numFmt = '0.0 "h"';
-        if (colNumber === 7) cell.numFmt = '#,##0 "T"';
+        cell.alignment = colNumber <= 6 ? leftStyle : rightStyle;
+        if (colNumber === 7 || colNumber === 8) cell.numFmt = '0.0 "h"';
+        if (colNumber === 9) cell.numFmt = '#,##0 "T"';
     });
-    sheet.mergeCells('A1:D1');
+    sheet.mergeCells('A1:F1');
     monthlyRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
 
     // Fila 2: Headers de columna
     const headerRow = sheet.getRow(2);
-    headerRow.values = ['HORARIO', 'MIN', 'SKU / TIPO', 'ACTIVIDAD / DESCRIPCIÓN', 'H. PROD', 'H. PARADA', 'TON'];
+    headerRow.values = [
+        'FECHA', 'HORARIO', 'MIN', 'SKU', 'TIPO', 
+        'ACTIVIDAD / DESCRIPCIÓN', 'H. PROD', 'H. PARADA', 'TON',
+        'TOTAL H. PROD (DÍA)', 'TOTAL H. PARADA (DÍA)', 'TOTAL TON (DÍA)'
+    ];
     headerRow.height = 25;
     headerRow.eachCell((cell) => {
         cell.font = headerFont;
@@ -87,31 +96,26 @@ const buildSecuenciaDiariaSheet = (workbook: ExcelJS.Workbook, data: ExportData)
         cell.border = borderStyle;
     });
 
+    const SEGMENT_TYPE_LABELS: Record<string, string> = {
+        production: 'Producción',
+        changeover: 'Cambio Medida',
+        maintenance_hp: 'Mantenimiento HP',
+        maintenance: 'Mantenimiento',
+        lunch: 'Refrigerio',
+        forced_stop: 'Parada Forzada',
+        stop_change: 'Parada Cambio',
+        quality_change: 'Cambio Calidad',
+        ring_change: 'Cambio Anillo',
+        channel_change: 'Cambio Canal',
+        adjustment: 'Ajuste',
+        unknown: 'Desconocido'
+    };
+
     // Filas de datos
     data.dailySchedules.forEach(day => {
-        // Fila de día
-        const dayRow = sheet.addRow([
-            format(new Date(day.date), 'EEEE d MMMM', { locale: es }).toUpperCase(),
-            '', '', '',
-            day.totalProductionMinutes / 60,
-            day.totalStoppageMinutes / 60,
-            day.totalTonnage
-        ]);
-
-        const rowNum = dayRow.number;
-        dayRow.height = 20;
-        dayRow.eachCell((cell, colNum) => {
-            cell.font = { bold: true, size: 11 };
-            cell.fill = subHeaderFill;
-            cell.border = borderStyle;
-            cell.alignment = colNum >= 5 ? rightStyle : leftStyle;
-            if (colNum === 5 || colNum === 6) cell.numFmt = '0.0';
-            if (colNum === 7) cell.numFmt = '#,##0';
-        });
-        sheet.mergeCells(`A${rowNum}:D${rowNum}`);
-        dayRow.getCell(1).alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
-
-        // Eventos
+        const firstEventRowNum = sheet.lastRow ? sheet.lastRow.number + 1 : 3;
+        const formattedDate = format(new Date(day.date), 'dd/MM/yyyy');
+        
         day.events.forEach((event: any) => {
             const start = new Date(event.startTime);
             const end = new Date(event.endTime);
@@ -119,13 +123,18 @@ const buildSecuenciaDiariaSheet = (workbook: ExcelJS.Workbook, data: ExportData)
             const durationHours = event.durationMinutes / 60;
 
             const row = sheet.addRow([
+                formattedDate,
                 `${format(start, 'HH:mm')} - ${format(end, 'HH:mm')}`,
                 Math.round(event.durationMinutes),
-                event.skuCode || event.label,
+                event.skuCode || '-',
+                SEGMENT_TYPE_LABELS[event.type] || event.type,
                 event.description || event.label,
                 isProd ? durationHours : null,
                 !isProd ? durationHours : null,
-                (isProd && event.tonnage) ? event.tonnage : null
+                (isProd && event.tonnage) ? event.tonnage : null,
+                day.totalProductionMinutes / 60,
+                day.totalStoppageMinutes / 60,
+                day.totalTonnage
             ]);
 
             // Color de fondo
@@ -150,21 +159,39 @@ const buildSecuenciaDiariaSheet = (workbook: ExcelJS.Workbook, data: ExportData)
             row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
                 cell.fill = rowFill;
                 cell.border = borderStyle;
-                if (colNumber === 1) cell.alignment = centerStyle;
-                if (colNumber === 2) cell.alignment = centerStyle;
-                if (colNumber === 3) {
-                    cell.alignment = leftStyle;
+                if (colNumber === 1) {
+                    cell.alignment = centerStyle;
+                    cell.font = { bold: true };
+                }
+                if (colNumber === 2 || colNumber === 3) cell.alignment = centerStyle;
+                if (colNumber === 4) {
+                    cell.alignment = centerStyle;
                     if (event.skuCode) cell.font = { bold: true };
                 }
-                if (colNumber === 4) {
+                if (colNumber === 5) cell.alignment = centerStyle;
+                if (colNumber === 6) {
                     cell.alignment = leftStyle;
                     if (isPeakHour) cell.font = { color: { argb: 'FFB91C1C' }, bold: true };
                 }
-                if (colNumber >= 5) cell.alignment = rightStyle;
-                if (colNumber === 5 || colNumber === 6) cell.numFmt = '0.00';
-                if (colNumber === 7) cell.numFmt = '#,##0.0';
+                if (colNumber >= 7 && colNumber <= 9) cell.alignment = rightStyle;
+                
+                // Estilo para los totales diarios (columnas 10, 11, 12)
+                if (colNumber >= 10) {
+                    cell.alignment = centerStyle;
+                    cell.font = { bold: true, color: { argb: 'FF1E40AF' } }; // Azul oscuro para diferenciar
+                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF6FF' } }; // Fondo azul claro (blue-50)
+                }
             });
         });
+
+        const lastEventRowNum = sheet.lastRow ? sheet.lastRow.number : firstEventRowNum;
+
+        // Combinar celdas de totales solo si hay más de un evento en el día
+        if (lastEventRowNum > firstEventRowNum) {
+            sheet.mergeCells(`J${firstEventRowNum}:J${lastEventRowNum}`);
+            sheet.mergeCells(`K${firstEventRowNum}:K${lastEventRowNum}`);
+            sheet.mergeCells(`L${firstEventRowNum}:L${lastEventRowNum}`);
+        }
     });
 };
 

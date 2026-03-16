@@ -250,7 +250,7 @@ export const useStore = create<AppState>()(
                                 programStartDate: new Date(configRes.data.program_start_date),
                                 workSchedule: configRes.data.work_schedule,
                                 holidays: configRes.data.holidays,
-                                autoStoppageRules: configRes.data.auto_stoppage_rules || state.processes[processId].autoStoppageRules,
+                                autoStoppageRules: configRes.data.auto_stoppage_rules || state.processes[processId]?.autoStoppageRules || createInitialProcessData(processId).autoStoppageRules,
                                 columnLabels: configRes.data.column_labels,
                                 visualTargetDate: configRes.data.visual_target_date ? new Date(configRes.data.visual_target_date) : null,
                                 sequencerConfig: configRes.data.sequencer_config || state.processes[processId].sequencerConfig
@@ -1058,7 +1058,8 @@ export const useStore = create<AppState>()(
                             holidays: data.holidays,
                             manualStops: data.manualStops,
                             columnLabels: data.columnLabels,
-                            visualTargetDate: data.visualTargetDate
+                            visualTargetDate: data.visualTargetDate,
+                            autoStoppageRules: data.autoStoppageRules
                         }
                     ])
                 )

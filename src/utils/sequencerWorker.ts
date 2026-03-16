@@ -244,9 +244,10 @@ function calcularValores(secuencia: any[], matriz: number[][], ventaDiaria: numb
             tiempoAcumulado += tc;
         }
 
-        // Calculate Stockouts
+        // Calculate Stockouts (Iteration 2: Non-linear penalty)
         const diasRotura = Math.max(0, tiempoAcumulado - stockActual[sku]);
-        ventaPerdidaTotal += diasRotura * ventaDiaria[sku];
+        const penaltyFactor = Math.pow(diasRotura, 1.2); // Cubic-ish growth to penalize long delays
+        ventaPerdidaTotal += penaltyFactor * ventaDiaria[sku];
 
         // Production Time
         const diasFabPonderado = diasFabricacion[sku] * (tamano / (tamanoTotal[sku] || 1));
@@ -265,6 +266,12 @@ function evaluar(secuencia: any[], params: WorkParams): Individual {
 
     const costos = calcularValores(secuencia, matrizCambioMedida, ventaDiaria, diasStock, diasFabricacion, idCambios);
     const { tiempoTotalCambio, ventaPerdidaTotal } = costos;
+
+    // --- ENHANCEMENT Iteration 2: Non-linear Stockout Penalty ---
+    // Actually, calcularValores returns ventaPerdidaTotal based on simple linear days.
+    // To implement non-linear penalty correctly, we need to adjust calculating logic.
+    // However, we can approximate it here if we want to avoid changing calcularValores signature.
+    // Let's refine calcularValores instead for better precision.
 
     const costoVP = ventaPerdidaTotal * costoToneladaPerdida;
     const costoTC = tiempoTotalCambio * costoHoraCambio;
@@ -455,6 +462,164 @@ function seleccionTorneo(poblacion: Individual[]): Individual {
     return mejor;
 }
 
+/**
+ * Or-Opt Relocation
+ * Exhaustively tries to relocate segments of size 3, 2, 1 to all positions.
+ */
+function orOptRelocation(ind: Individual, params: WorkParams): Individual {
+    let currentBest = ind;
+    const n = ind.secuencia.length;
+    if (n <= 4) return ind;
+
+    let improved = true;
+    while (improved) {
+        improved = false;
+        for (let size = 3; size >= 1; size--) {
+            for (let j = 1; j <= n - size; j++) {
+                const segment = currentBest.secuencia.slice(j, j + size);
+                const remaining = [...currentBest.secuencia];
+                remaining.splice(j, size);
+                
+                for (let k = 1; k <= remaining.length; k++) {
+                    const testSeq = [...remaining];
+                    testSeq.splice(k, 0, ...segment);
+                    const candidate = evaluar(testSeq, params);
+                    if (candidate.aptitud > currentBest.aptitud) {
+                        currentBest = candidate;
+                        improved = true;
+                        break;
+                    }
+                }
+                if (improved) break;
+            }
+            if (improved) break;
+        }
+    }
+    return currentBest;
+}
+
+/**
+ * Disturbance: Ruin and Recreate
+ */
+function ruinAndRecreate(ind: Individual, params: WorkParams, ruinSize: number = 4): Individual {
+    const n = ind.secuencia.length;
+    if (n <= ruinSize + 2) return ind;
+
+    const tempSeq = [...ind.secuencia];
+    const startPos = Math.floor(Math.random() * (n - 1 - ruinSize)) + 1;
+    const ruinedItems = tempSeq.splice(startPos, ruinSize);
+
+    while (ruinedItems.length > 0) {
+        const it = ruinedItems.pop();
+        let bestPos = -1;
+        let maxAptitud = -Infinity;
+
+        // Greedy Re-insertion
+        for (let p = 1; p <= tempSeq.length; p++) {
+            const testSeq = [...tempSeq];
+            testSeq.splice(p, 0, it);
+            const candidate = evaluar(testSeq, params);
+            if (candidate.aptitud > maxAptitud) {
+                maxAptitud = candidate.aptitud;
+                bestPos = p;
+            }
+        }
+        tempSeq.splice(bestPos, 0, it);
+    }
+    return evaluar(tempSeq, params);
+}
+
+/**
+ * HyperOptimizer Ensemble
+ * Combines Adaptive VNS, Or-Opt and Periodic Disturbances.
+ */
+function refineWithHyper(ind: Individual, params: WorkParams, iterations: number = 2000): Individual {
+    let currentBest = ind;
+    const neighborhoods = [
+        { name: 'Swap', weight: 1.0 },
+        { name: 'Insert', weight: 1.0 },
+        { name: 'Reverse', weight: 1.5 },
+        { name: 'Batch', weight: 1.2 },
+        { name: 'OrOpt', weight: 2.0 }
+    ];
+
+    for (let i = 0; i < iterations; i++) {
+        // Selection: Roulette wheel
+        const totalWeight = neighborhoods.reduce((s, n) => s + n.weight, 0);
+        let r = Math.random() * totalWeight;
+        let neighbor = neighborhoods[0];
+        for (const n of neighborhoods) {
+            r -= n.weight;
+            if (r <= 0) {
+                neighbor = n;
+                break;
+            }
+        }
+
+        const n = currentBest.secuencia.length;
+        let nextSeq = [...currentBest.secuencia];
+
+        if (neighbor.name === 'OrOpt') {
+            const refined = orOptRelocation(currentBest, params);
+            if (refined.aptitud > currentBest.aptitud) {
+                currentBest = refined;
+                neighbor.weight += 0.1;
+            }
+            continue;
+        }
+
+        // Standard Shaking
+        if (neighbor.name === 'Swap') {
+            const a = Math.floor(Math.random() * (n - 1)) + 1;
+            const b = Math.floor(Math.random() * (n - 1)) + 1;
+            [nextSeq[a], nextSeq[b]] = [nextSeq[b], nextSeq[a]];
+        } else if (neighbor.name === 'Insert') {
+            const a = Math.floor(Math.random() * (n - 1)) + 1;
+            const [item] = nextSeq.splice(a, 1);
+            const b = Math.floor(Math.random() * (n - 1)) + 1;
+            nextSeq.splice(b, 0, item);
+        } else if (neighbor.name === 'Reverse') {
+            const iPos = Math.floor(Math.random() * (n - 2)) + 1;
+            const jPos = Math.floor(Math.random() * (n - 1 - iPos)) + iPos + 1;
+            const sub = nextSeq.slice(iPos, jPos + 1).reverse();
+            nextSeq.splice(iPos, sub.length, ...sub);
+        } else if (neighbor.name === 'Batch') {
+            const targetId = params.idCambios[nextSeq[Math.floor(Math.random() * (n - 1)) + 1].sku];
+            const batch: any[] = [];
+            const remaining: any[] = [];
+            const first = nextSeq[0];
+            for (let m = 1; m < n; m++) {
+                if (params.idCambios[nextSeq[m].sku] === targetId) batch.push(nextSeq[m]);
+                else remaining.push(nextSeq[m]);
+            }
+            if (batch.length > 0) {
+                const insertPos = Math.floor(Math.random() * (remaining.length + 1));
+                remaining.splice(insertPos, 0, ...batch);
+                nextSeq.length = 0;
+                nextSeq.push(first, ...remaining);
+            }
+        }
+
+        const candidate = evaluar(nextSeq, params);
+        if (candidate.aptitud > currentBest.aptitud) {
+            currentBest = candidate;
+            neighbor.weight += 0.2;
+        } else {
+            neighbor.weight = Math.max(0.1, neighbor.weight - 0.01);
+        }
+
+        // Periodic Disturbance
+        if (i % 500 === 0 && i > 0) {
+            const disturbed = ruinAndRecreate(currentBest, params, 4);
+            if (disturbed.aptitud > currentBest.aptitud) {
+                currentBest = disturbed;
+            }
+        }
+    }
+    return currentBest;
+}
+
+
 // --- CONFIGURATION ---
 const NUM_EPOCHS = 5;
 
@@ -535,8 +700,9 @@ onmessage = function (e) {
                 }
             }
 
-            // End of Epoch, apply final sweep and check if it's the absolute best
-            bestGlobal = full2OptFirstImprovement(bestGlobal, params);
+            // End of Epoch, apply final sweeps and check if it's the absolute best
+            bestGlobal = orOptRelocation(bestGlobal, params);
+            bestGlobal = refineWithHyper(bestGlobal, params, 1500);
 
             if (!absoluteBestGlobal || bestGlobal.aptitud > absoluteBestGlobal.aptitud) {
                 absoluteBestGlobal = bestGlobal;
@@ -544,6 +710,10 @@ onmessage = function (e) {
         }
 
         if (!absoluteBestGlobal) return;
+
+        // One last deep polish on the absolute best
+        absoluteBestGlobal = orOptRelocation(absoluteBestGlobal, params);
+        absoluteBestGlobal = refineWithHyper(absoluteBestGlobal, params, 3000);
 
         const { tiempoTotalCambio, ventaPerdidaTotal, tiempoAcumulado, tiemposCambio } = absoluteBestGlobal.costos;
         const costoVP = ventaPerdidaTotal * params.costoToneladaPerdida;

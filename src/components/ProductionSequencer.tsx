@@ -269,7 +269,7 @@ export const ProductionSequencer: React.FC = () => {
     const sapData = useSapStore((state) => state.sapData);
 
     useEffect(() => {
-        fetchSapData();
+        fetchSapData(true); // Force refresh on mount to guarantee fresh stock data
     }, []);
 
     // Refresh live stock/sales data whenever sapData arrives or draftItems change their SKU set
@@ -282,7 +282,9 @@ export const ProductionSequencer: React.FC = () => {
 
         // Build a stable key from current SKU set to avoid re-running on quantity/order changes
         const currentSkuSet = draftItems.map(d => d.skuCode).sort().join(',');
-        if (lastRefreshedSkuSetRef.current === currentSkuSet && lastRefreshedStockSourceRef.current === params.stockSource) return; // Same SKUs, no need to re-enrich
+        // Skip if SKU set and stock source haven't changed AND all items already have valid stock data
+        const hasStaleItems = draftItems.some(it => it.stockInicial === 0 && it.ventaDiaria === 0 && !!sapData[it.skuCode]);
+        if (lastRefreshedSkuSetRef.current === currentSkuSet && lastRefreshedStockSourceRef.current === params.stockSource && !hasStaleItems) return; // Same SKUs, no need to re-enrich
         lastRefreshedSkuSetRef.current = currentSkuSet;
         lastRefreshedStockSourceRef.current = params.stockSource;
 
@@ -311,6 +313,10 @@ export const ProductionSequencer: React.FC = () => {
 
         hasRestoredRef.current = true;
         lastRestoredProcessRef.current = activeProcessId;
+
+        // Reset enrichment refs so SAP data always flows into the restored draftItems
+        lastRefreshedSkuSetRef.current = '';
+        lastRefreshedStockSourceRef.current = '';
 
         // Apply config explicitly
         setDraftItems(sequencerConfigFromStore.draftItems || []);
@@ -523,6 +529,7 @@ export const ProductionSequencer: React.FC = () => {
             const next = { ...prev };
             Object.keys(next).forEach(k => {
                 next[k] = { ...next[k], result: null, status: 'idle', progress: 0 };
+                saveSequencerResult(k as any, null, params); // Clean up DB
             });
             return next;
         });
@@ -630,6 +637,7 @@ export const ProductionSequencer: React.FC = () => {
                                 const next = { ...prev };
                                 Object.keys(next).forEach(k => {
                                     next[k] = { ...next[k], result: null, status: 'idle', progress: 0 };
+                                    saveSequencerResult(k as any, null, params); // Clean up DB
                                 });
                                 return next;
                             });
