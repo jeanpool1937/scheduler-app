@@ -1,12 +1,13 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import type { ColDef, RowDragEndEvent, ValueSetterParams, GridReadyEvent } from 'ag-grid-community';
 import { useStore } from '../store/useStore';
 import { useArticleStore } from '../store/useArticleStore';
 import type { ProductionScheduleItem } from '../types';
+import type { Article } from '../types/article';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Plus, Trash2, CalendarClock, Undo2, RotateCcw, Eye, Save, Columns } from 'lucide-react';
+import { Plus, Trash2, CalendarClock, Undo2, RotateCcw, Eye, Save, Columns, ClipboardPaste } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { TargetDateModal } from './TargetDateModal';
 import { ProductionGanttWrapper } from './ProductionGantt';
@@ -14,21 +15,9 @@ import { ProductionGanttWrapper } from './ProductionGantt';
 // Clave para guardar el estado de columnas en localStorage
 const COLUMN_STATE_KEY = 'scheduler-column-state';
 
-export const ProductionScheduler: React.FC = () => {
+const ProductionSchedulerContent: React.FC = () => {
     const activeProcessId = useStore((state) => state.activeProcessId);
     const processData = useStore((state) => state.processes[activeProcessId]);
-
-    // Guard clause to prevent crash during state transitions
-    if (!processData) {
-        return (
-            <div className="flex items-center justify-center h-full text-zinc-500 bg-zinc-50/50">
-                <div className="flex flex-col items-center gap-3">
-                    <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-                    <p className="text-sm font-medium">Cargando datos del proceso...</p>
-                </div>
-            </div>
-        );
-    }
 
     const {
         schedule = [],
@@ -36,7 +25,7 @@ export const ProductionScheduler: React.FC = () => {
         programStartDate = new Date(),
         scheduleHistory = [],
         columnLabels = {}
-    } = processData;
+    } = processData ?? {};
 
     const {
         insertScheduleItem,
@@ -57,8 +46,27 @@ export const ProductionScheduler: React.FC = () => {
 
     const articles = useArticleStore((state) => state.articlesByProcess[activeProcessId] || []);
 
+    // Performance Optimization: Create a Map for O(1) lookups during rendering
+    const articleMap = useMemo(() => {
+        const map = new Map<string, Article>();
+        articles.forEach(a => {
+            const cleanSku = String(a.codigoProgramacion || '').replace(/\s+/g, '');
+            map.set(cleanSku, a);
+            if (a.skuLaminacion) {
+                map.set(String(a.skuLaminacion).replace(/\s+/g, ''), a);
+            }
+        });
+        return map;
+    }, [articles, activeProcessId]);
+
     // Context Menu State
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; rowIndex: number; rowId: string } | null>(null);
+
+    // Confirm clear modal
+    const [showClearConfirm, setShowClearConfirm] = useState(false);
+
+    // Hidden textarea used as clipboard buffer — avoids navigator.clipboard permission issues
+    const pasteBufferRef = React.useRef<HTMLTextAreaElement>(null);
 
     // Grid Ref
     const gridRef = React.useRef<AgGridReact>(null);
@@ -292,10 +300,15 @@ export const ProductionScheduler: React.FC = () => {
         setContextMenu(null);
     };
 
-    // Force validation/recalculation on mount to ensure new columns populate
+    // Force validation/recalculation on mount or when articles change
+    // Guard: Only recalculate if we have articles loaded for the active process
+    const isArticlesLoaded = useArticleStore((state) => !!state.articlesByProcess[activeProcessId]);
+
     React.useEffect(() => {
-        recalculateSchedule();
-    }, [recalculateSchedule]);
+        if (isArticlesLoaded) {
+            recalculateSchedule();
+        }
+    }, [recalculateSchedule, isArticlesLoaded, activeProcessId]);
 
     // Use Articles as the master data
 
@@ -580,7 +593,8 @@ export const ProductionScheduler: React.FC = () => {
                 wrapHeaderText: true,
                 autoHeaderHeight: true,
                 cellClass: (params) => {
-                    const exists = articles.some(a => a.codigoProgramacion === params.value);
+                    const cleanSku = String(params.value || '').replace(/\s+/g, '');
+                    const exists = articleMap.has(cleanSku);
                     return (exists ? 'font-bold' : 'bg-red-50 text-red-600') + ' cell-mono';
                 }
             },
@@ -591,7 +605,8 @@ export const ProductionScheduler: React.FC = () => {
                 wrapHeaderText: true,
                 autoHeaderHeight: true,
                 valueGetter: (params) => {
-                    const sku = articles.find(a => a.codigoProgramacion === params.data?.skuCode);
+                    const cleanSku = String(params.data?.skuCode || '').replace(/\s+/g, '');
+                    const sku = articleMap.get(cleanSku);
                     return sku ? sku.descripcion : '---';
                 }
             },
@@ -880,13 +895,28 @@ export const ProductionScheduler: React.FC = () => {
             colId: 'startTime',
             headerName: 'Inicio',
             width: 160,
-            valueGetter: (params) => params.data?.startTime,
+            valueGetter: (params) => params.data?.computedStart || params.data?.startTime,
             valueFormatter: (params) => {
                 if (!params.value) return '';
                 try {
                     return format(new Date(params.value), 'EEE dd/MM HH:mm', { locale: es });
                 } catch (e) { return ''; }
             }
+        });
+
+        // --- Fin (endTime) ---
+        cols.push({
+            colId: 'endTime',
+            headerName: 'Fin',
+            width: 160,
+            valueGetter: (params) => params.data?.computedEnd || params.data?.endTime,
+            valueFormatter: (params) => {
+                if (!params.value) return '';
+                try {
+                    return format(new Date(params.value), 'EEE dd/MM HH:mm', { locale: es });
+                } catch (e) { return ''; }
+            },
+            cellStyle: { backgroundColor: '#fdf2f2', fontWeight: 'bold' }
         });
 
         // --- Delete Action ---
@@ -909,32 +939,30 @@ export const ProductionScheduler: React.FC = () => {
 
     // --- Event Handlers ---
 
-
-
-
-
-
-    const handlePaste = useCallback((e: React.ClipboardEvent) => {
-        const clipboardData = e.clipboardData.getData('text');
-        if (!clipboardData) return;
+    // Core paste logic — receives plain text from clipboard
+    const processPasteText = useCallback((text: string) => {
+        if (!text.trim()) return;
 
         const api = gridRef.current?.api;
         const focusedCell = api?.getFocusedCell();
-        const rows = clipboardData.split(/\r\n|\r|\n/).filter(row => row.trim() !== '');
+        let rows = text.split(/\r\n|\r|\n/).filter(row => row.trim() !== '');
+        // If a single line with no tabs, try splitting by spaces/commas (e.g. "400013 406017 400015")
+        if (rows.length === 1 && !rows[0].includes('\t')) {
+            const parts = rows[0].split(/[\s,;]+/).map(p => p.trim()).filter(Boolean);
+            if (parts.length > 1) rows = parts;
+        }
 
         if (rows.length === 0) return;
 
         // --- Logic A: Paste into Quantity Column (Update Only) ---
         if (focusedCell?.column.getColId() === 'quantity') {
-            e.preventDefault(); // Stop default generic paste
             const startRowIndex = focusedCell.rowIndex;
             if (startRowIndex === null || startRowIndex === undefined) return;
 
             rows.forEach((row, offset) => {
                 const targetIndex = startRowIndex + offset;
-                if (targetIndex >= schedule.length) return; // Stop if end of table
+                if (targetIndex >= schedule.length) return;
 
-                // Assume single column of numbers
                 const valStr = row.split('\t')[0].trim();
                 const val = parseFloat(valStr.replace(/,/g, ''));
 
@@ -946,31 +974,15 @@ export const ProductionScheduler: React.FC = () => {
             return;
         }
 
-        // --- Logic B: Paste into Product Code (Create or Update) ---
-        // Or default if no focus (Legacy behavior)
-
-        // If we are focused on 'skuCode', we try to update existing rows first, then create new ones?
-        // OR we just assume "Bulk Add" if it's a large paste?
-        // User workflow seems to be: Copy from Excel, Paste to ADD to the list or UPDATE.
-
-        // Let's implement robust "Create New" but verify columns.
-
+        // --- Logic B: Paste into Product Code / default (creates new rows) ---
         const newItems: ProductionScheduleItem[] = [];
         const startingSequence = schedule.length;
-
-        // If the user meant to paste Quantities but clicked "Code", we can't really save them, 
-        // effectively this is user error or bad copy. 
-        // But we can check if it looks like a valid code lookup? No, that's too heavy.
-
-        // We will assume that if we are NOT in Quantity column, we are adding new items (Legacy)
-        // BUT we should respect 2 columns vs 1 column
 
         rows.forEach((row, index) => {
             const cols = row.split('\t');
             if (cols.length === 0) return;
 
             const skuCode = cols[0].trim();
-            // Optional Quantity in 2nd column
             const quantity = cols.length > 1 ? (parseFloat(cols[1].trim().replace(/,/g, '')) || 0) : 0;
 
             if (skuCode) {
@@ -989,10 +1001,51 @@ export const ProductionScheduler: React.FC = () => {
         });
 
         if (newItems.length > 0) {
-            e.preventDefault();
             addScheduleItems(newItems);
         }
     }, [schedule, addScheduleItems, updateScheduleItem]);
+
+    // Paste via hidden textarea — no clipboard-read permission needed.
+    // Strategy: on Ctrl+V (when not in an editable field), redirect focus to the
+    // hidden textarea so the browser fires a native paste event on it, then read
+    // clipboardData directly from that event.
+    useEffect(() => {
+        const buffer = pasteBufferRef.current;
+        if (!buffer) return;
+
+        const handlePasteOnBuffer = (e: ClipboardEvent) => {
+            const text = e.clipboardData?.getData('text') ?? '';
+            e.preventDefault();
+            if (text) processPasteText(text);
+            // Return focus to body so the grid can be re-focused by the user
+            buffer.blur();
+        };
+
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (!((e.ctrlKey || e.metaKey) && e.key === 'v')) return;
+
+            const active = document.activeElement as HTMLElement | null;
+            // Skip — user is typing into a real input (date picker, header editor, etc.)
+            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') && active !== buffer) return;
+            // Skip — AG Grid cell is in edit mode
+            if (active?.closest('.ag-cell-edit-wrapper')) return;
+
+            // Focus the buffer so the browser's natural Ctrl+V paste fires on it
+            buffer.value = '';
+            buffer.focus();
+            // No preventDefault / execCommand — browser pastes naturally into the now-focused textarea
+        };
+
+        buffer.addEventListener('paste', handlePasteOnBuffer);
+        document.addEventListener('keydown', handleKeyDown);
+        return () => {
+            buffer.removeEventListener('paste', handlePasteOnBuffer);
+            document.removeEventListener('keydown', handleKeyDown);
+        };
+    }, [processPasteText]);
+
+
+
 
 
     const onCellValueChanged = useCallback((event: any) => {
@@ -1033,9 +1086,16 @@ export const ProductionScheduler: React.FC = () => {
         }
     };
 
-    const handleClearAll = () => {
-        if (window.confirm('¿Estás seguro de que quieres BORRAR TODA la programación? esta acción no se puede deshacer.')) {
-            clearSchedule();
+    const handleClearAll = () => setShowClearConfirm(true);
+
+    const handlePasteButton = async () => {
+        try {
+            const text = await navigator.clipboard.readText();
+            if (text) processPasteText(text);
+        } catch {
+            // Fallback: focus buffer so the user can Ctrl+V immediately after
+            const buffer = pasteBufferRef.current;
+            if (buffer) { buffer.value = ''; buffer.focus(); }
         }
     };
 
@@ -1043,11 +1103,42 @@ export const ProductionScheduler: React.FC = () => {
 
     return (
         <div
-            className="h-full flex flex-col gap-2 relative" // Added relative for context menu
-            onPaste={handlePaste}
-            tabIndex={0} // Make div focusable to catch paste events
+            className="h-full flex flex-col gap-2 relative"
             style={{ outline: 'none' }}
         >
+            {/* Hidden clipboard buffer textarea — receives native paste events without requiring clipboard-read permission */}
+            <textarea
+                ref={pasteBufferRef}
+                aria-hidden="true"
+                style={{ position: 'fixed', top: -9999, left: -9999, width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
+                tabIndex={-1}
+            />
+
+            {/* Confirm clear modal */}
+            {showClearConfirm && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+                    <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full mx-4">
+                        <p className="text-gray-800 font-medium mb-5">
+                            ¿Estás seguro de que quieres BORRAR TODA la programación? Esta acción no se puede deshacer.
+                        </p>
+                        <div className="flex justify-end gap-3">
+                            <button
+                                className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+                                onClick={() => setShowClearConfirm(false)}
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                className="px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700"
+                                onClick={() => { setShowClearConfirm(false); clearSchedule(); }}
+                            >
+                                Borrar todo
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Custom Context Menu */}
             {modalData && (
                 <TargetDateModal
@@ -1208,6 +1299,15 @@ export const ProductionScheduler: React.FC = () => {
                     <div className="h-6 w-px bg-gray-200 mx-2"></div>
 
                     <button
+                        onClick={handlePasteButton}
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white text-gray-500 border border-gray-200 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all"
+                        title="Pegar desde portapapeles (Ctrl+V)"
+                    >
+                        <ClipboardPaste size={16} />
+                        Pegar
+                    </button>
+
+                    <button
                         onClick={undo}
                         disabled={!canUndo()}
                         className={`
@@ -1309,4 +1409,25 @@ export const ProductionScheduler: React.FC = () => {
             )}
         </div>
     );
+};
+
+// Wrapper component: guarantees processData exists before rendering the inner component.
+// This fixes the "Rendered more/fewer hooks than during the previous render" crash
+// caused by the early return guard that was previously inside the main component body.
+export const ProductionScheduler: React.FC = () => {
+    const activeProcessId = useStore((state) => state.activeProcessId);
+    const processData = useStore((state) => state.processes[activeProcessId]);
+
+    if (!processData) {
+        return (
+            <div className="flex items-center justify-center h-full text-zinc-500 bg-zinc-50/50">
+                <div className="flex flex-col items-center gap-3">
+                    <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                    <p className="text-sm font-medium">Cargando datos del proceso...</p>
+                </div>
+            </div>
+        );
+    }
+
+    return <ProductionSchedulerContent />;
 };

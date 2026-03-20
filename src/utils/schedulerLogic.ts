@@ -1,6 +1,6 @@
-
 import { addMinutes, differenceInMilliseconds, getDay, isAfter, isBefore, setHours, setMinutes, startOfDay, addDays, format, differenceInMinutes } from 'date-fns';
 import type { ProductionScheduleItem, SegmentType, WorkSchedule } from '../types';
+import type { Article } from '../types/article';
 
 // ============================================================
 // CONFIGURACIÓN
@@ -306,7 +306,8 @@ const getMinutesUntilShiftEnd = (date: Date, ws: WorkSchedule): number => {
 const buildBaseline = (
     items: ProductionScheduleItem[],
     globalStart: Date,
-    ws?: WorkSchedule
+    ws?: WorkSchedule,
+    articleMap?: Map<string, Article>
 ): EnhancedScheduleItem[] => {
     let cursor = new Date(globalStart);
     cursor.setSeconds(0, 0);
@@ -321,6 +322,22 @@ const buildBaseline = (
     return items.map(item => {
         const itemStart = new Date(cursor);
         const segments: ScheduleSegment[] = [];
+
+        // --- Asignar Ritmo desde maestro si es 0 y recalcular duración ---
+        let calculatedPace = item.calculatedPace || 0;
+        let productionTimeMinutes = item.productionTimeMinutes || 0;
+
+        if ((!calculatedPace || calculatedPace === 0) && item.skuCode && articleMap) {
+            const cleanSku = String(item.skuCode).replace(/\s+/g, '');
+            const art = articleMap.get(cleanSku);
+            if (art) {
+                calculatedPace = art.ritmoTH || 0;
+                // Si la duración era 0 pero tenemos cantidad y ritmo, calcularla
+                if (productionTimeMinutes === 0 && calculatedPace > 0 && item.quantity > 0) {
+                    productionTimeMinutes = (item.quantity / calculatedPace) * 60;
+                }
+            }
+        }
 
         const unshiftSegment = (type: SegmentType, duration: number, desc?: string) => {
             let remaining = duration;
@@ -377,12 +394,14 @@ const buildBaseline = (
             unshiftSegment('stop_change', item.stopChangeMinutes);
         }
 
-        if (item.productionTimeMinutes > 0) {
-            unshiftSegment('production', item.productionTimeMinutes);
+        if (productionTimeMinutes > 0) {
+            unshiftSegment('production', productionTimeMinutes);
         }
 
         return {
             ...item,
+            calculatedPace,
+            productionTimeMinutes,
             computedStart: itemStart,
             computedEnd: new Date(cursor),
             segments,
@@ -495,7 +514,9 @@ const findInsertionPoints = (
     timelineEnd: Date,
     holidays: string[],
     manualStops: { id: string; start: Date; durationMinutes: number; label: string }[] = [],
-    autoStoppages?: import('../types').ProcessAutoStoppages
+    autoStoppages?: import('../types').ProcessAutoStoppages,
+    _articleMap?: Map<string, Article>,
+    _rulesMap?: Map<string, number>
 ): InsertionPoint[] => {
     const insertions: InsertionPoint[] = [];
 
@@ -842,7 +863,9 @@ const insertTypeBCStops = (
     holidays: string[],
     manualStops: { id: string; start: Date; durationMinutes: number; label: string }[],
     ws?: WorkSchedule,
-    autoStoppages?: import('../types').ProcessAutoStoppages
+    autoStoppages?: import('../types').ProcessAutoStoppages,
+    articleMap?: Map<string, Article>,
+    rulesMap?: Map<string, number>
 ): EnhancedScheduleItem[] => {
     let iteration = 0;
     let changed = true;
@@ -859,7 +882,7 @@ const insertTypeBCStops = (
         const timelineEnd = items[items.length - 1].computedEnd;
 
         // Encontrar todos los puntos de inserción necesarios
-        const insertions = findInsertionPoints(flat, timelineStart, timelineEnd, holidays, manualStops, autoStoppages);
+        const insertions = findInsertionPoints(flat, timelineStart, timelineEnd, holidays, manualStops, autoStoppages, articleMap, rulesMap);
 
         if (insertions.length === 0) break;
 
@@ -897,15 +920,21 @@ export const simulateSchedule = (
     holidays: string[] = [],
     manualStops: { id: string; start: Date; durationMinutes: number; label: string }[] = [],
     workSchedule?: WorkSchedule,
-    autoStoppages?: import('../types').ProcessAutoStoppages
+    autoStoppages?: import('../types').ProcessAutoStoppages,
+    articleMap?: Map<string, Article>,
+    rulesMap?: Map<string, number>
 ): EnhancedScheduleItem[] => {
     if (items.length === 0) return [];
 
+    // Fallback in case they are not provided (legacy calls)
+    const finalArticleMap = articleMap || new Map();
+    const finalRulesMap = rulesMap || new Map();
+
     // Fase 1: Construir baseline con solo paradas Tipo A (y off_shift)
-    const baseline = buildBaseline(items, globalStart, workSchedule);
+    const baseline = buildBaseline(items, globalStart, workSchedule, finalArticleMap);
 
     // Fase 2: Insertar paradas Tipo B/C iterativamente hasta convergencia
-    const result = insertTypeBCStops(baseline, holidays, manualStops, workSchedule, autoStoppages);
+    const result = insertTypeBCStops(baseline, holidays, manualStops, workSchedule, autoStoppages, finalArticleMap, finalRulesMap);
 
     return result;
 };

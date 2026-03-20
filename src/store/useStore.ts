@@ -4,7 +4,6 @@ import type { AppState, ProcessData, ProductionScheduleItem, StoppageConfig, Wor
 import type { Article } from '../types/article';
 import { useArticleStore } from './useArticleStore';
 import { useChangeoverStore } from './useChangeoverStore';
-import type { ChangeoverRule } from '../types/changeover';
 import { format } from 'date-fns';
 import { simulateSchedule } from '../utils/schedulerLogic';
 import { supabase } from '../lib/supabaseClient';
@@ -18,8 +17,8 @@ const extractLengthFromDescription = (desc: string | undefined): string | null =
 
 const recalculate = (
     items: ProductionScheduleItem[],
-    articles: Article[],
-    rules: ChangeoverRule[],
+    articleMap: Map<string, Article>,
+    rulesMap: Map<string, number>,
     startDate: Date,
     holidays: string[] = [],
     manualStops: { id: string; start: Date; durationMinutes: number; label: string }[] = [],
@@ -31,10 +30,7 @@ const recalculate = (
     // Phase 1: Calculate Static Attributes
     const preProcessedItems = sorted.map((item, index) => {
         const cleanSku = String(item.skuCode || '').replace(/\s+/g, '');
-        let article = articles.find(a => String(a.codigoProgramacion || '').replace(/\s+/g, '') === cleanSku);
-        if (!article) {
-            article = articles.find(a => String(a.skuLaminacion || '') === cleanSku);
-        }
+        const article = articleMap.get(cleanSku);
 
         const pace = parseFloat(String(article?.ritmoTH || 0)) || 0;
 
@@ -43,21 +39,13 @@ const recalculate = (
         if (index > 0) {
             const prevItem = sorted[index - 1];
             const cleanPrevSku = String(prevItem.skuCode || '').replace(/\s+/g, '');
-            let prevArticle = articles.find(a => String(a.codigoProgramacion || '').replace(/\s+/g, '') === cleanPrevSku);
-            if (!prevArticle) {
-                prevArticle = articles.find(a => String(a.skuLaminacion || '') === cleanPrevSku);
-            }
+            const prevArticle = articleMap.get(cleanPrevSku);
 
             if (article?.idTablaCambioMedida && prevArticle?.idTablaCambioMedida) {
                 const fromId = String(prevArticle.idTablaCambioMedida).trim();
                 const toId = String(article.idTablaCambioMedida).trim();
-                const rule = rules.find(r =>
-                    String(r.fromId).trim() === fromId &&
-                    String(r.toId).trim() === toId
-                );
-                if (rule) {
-                    changeoverMinutes = (rule.durationHours || 0) * 60;
-                }
+                const ruleKey = `${fromId}->${toId}`;
+                changeoverMinutes = rulesMap.get(ruleKey) || 0;
             }
         }
 
@@ -65,7 +53,8 @@ const recalculate = (
         let qualityChangeMinutes = 0;
         if (index > 0 && changeoverMinutes === 0) {
             const prevItem = sorted[index - 1];
-            const prevArticle = articles.find(a => a.codigoProgramacion === prevItem.skuCode);
+            const cleanPrevSku = String(prevItem.skuCode || '').replace(/\s+/g, '');
+            const prevArticle = articleMap.get(cleanPrevSku);
             if (article?.calidadPalanquilla && prevArticle?.calidadPalanquilla) {
                 if (article.calidadPalanquilla.trim() !== prevArticle.calidadPalanquilla.trim()) {
                     qualityChangeMinutes = 60;
@@ -77,7 +66,8 @@ const recalculate = (
         let stopChangeMinutes = 0;
         if (index > 0 && changeoverMinutes === 0 && qualityChangeMinutes === 0) {
             const prevItem = sorted[index - 1];
-            const prevArticle = articles.find(a => a.codigoProgramacion === prevItem.skuCode);
+            const cleanPrevSku = String(prevItem.skuCode || '').replace(/\s+/g, '');
+            const prevArticle = articleMap.get(cleanPrevSku);
             const currentLength = extractLengthFromDescription(article?.descripcion);
             const prevLength = extractLengthFromDescription(prevArticle?.descripcion);
             if (currentLength && prevLength && currentLength !== prevLength) {
@@ -407,7 +397,7 @@ export const useStore = create<AppState>()(
                             ...state.processes,
                             [pid]: {
                                 ...pData,
-                                scheduleHistory: [JSON.parse(JSON.stringify(pData.schedule)), ...pData.scheduleHistory].slice(0, MAX_HISTORY)
+                                scheduleHistory: [JSON.parse(JSON.stringify(pData.schedule)), ...(pData.scheduleHistory || [])].slice(0, MAX_HISTORY)
                             }
                         }
                     };
@@ -535,7 +525,11 @@ export const useStore = create<AppState>()(
                         [pid]: { ...state.processes[pid], schedule: [] }
                     }
                 }));
-                await supabase.from('scheduler_production_items').delete().eq('process_id', pid);
+                try {
+                    await supabase.from('scheduler_production_items').delete().eq('process_id', pid);
+                } catch (e) {
+                    console.error('Error clearing schedule from Supabase:', e);
+                }
             },
 
             reorderSchedule: async (newOrder) => {
@@ -592,10 +586,27 @@ export const useStore = create<AppState>()(
                 const pData = state.processes[pid];
 
                 const { schedule, programStartDate, holidays, manualStops, workSchedule, autoStoppageRules } = pData;
-                const articles = useArticleStore.getState().getArticles(pid);
-                const rules = useChangeoverStore.getState().getRules(pid);
+                const articlesArray = useArticleStore.getState().getArticles(pid);
+                const rulesArray = useChangeoverStore.getState().getRules(pid);
 
-                const newSchedule = recalculate(schedule, articles, rules, programStartDate, holidays, manualStops, workSchedule, autoStoppageRules);
+                // --- Pre-index for Performance O(1) ---
+                const articleMap = new Map<string, Article>();
+                articlesArray.forEach((a: Article) => {
+                    const cleanSku = String(a.codigoProgramacion || '').replace(/\s+/g, '');
+                    articleMap.set(cleanSku, a);
+                    // Also index by skuLaminacion if different
+                    if (a.skuLaminacion) {
+                        articleMap.set(String(a.skuLaminacion).replace(/\s+/g, ''), a);
+                    }
+                });
+
+                const rulesMap = new Map<string, number>();
+                rulesArray.forEach((r: import('../types/changeover').ChangeoverRule) => {
+                    const key = `${String(r.fromId).trim()}->${String(r.toId).trim()}`;
+                    rulesMap.set(key, (r.durationHours || 0) * 60);
+                });
+
+                const newSchedule = recalculate(schedule, articleMap, rulesMap, programStartDate, holidays, manualStops, workSchedule, autoStoppageRules);
 
                 set((s) => ({
                     processes: {
@@ -608,8 +619,8 @@ export const useStore = create<AppState>()(
             undo: async () => {
                 const state = get();
                 const pid = state.activeProcessId;
-                const pData = state.processes[pid];
-                if (pData.scheduleHistory.length === 0) return;
+                const pData = state.processes?.[pid];
+                if (!pData || !pData.scheduleHistory || pData.scheduleHistory.length === 0) return;
 
                 const [lastState, ...rest] = pData.scheduleHistory;
                 set((s) => ({
@@ -625,7 +636,8 @@ export const useStore = create<AppState>()(
             canUndo: () => {
                 const state = get();
                 const pid = state.activeProcessId;
-                return state.processes[pid].scheduleHistory.length > 0;
+                const pData = state.processes?.[pid];
+                return (pData?.scheduleHistory?.length || 0) > 0;
             },
 
             setColumnLabel: async (field, label) => {
@@ -845,6 +857,21 @@ export const useStore = create<AppState>()(
                 const articles = useArticleStore.getState().getArticles(pid);
                 const rules = useChangeoverStore.getState().getRules(pid);
 
+                const articleMap = new Map<string, Article>();
+                articles.forEach((a: Article) => {
+                    const cleanSku = String(a.codigoProgramacion || '').replace(/\s+/g, '');
+                    articleMap.set(cleanSku, a);
+                    if (a.skuLaminacion) {
+                        articleMap.set(String(a.skuLaminacion).replace(/\s+/g, ''), a);
+                    }
+                });
+
+                const rulesMap = new Map<string, number>();
+                rules.forEach((r: import('../types/changeover').ChangeoverRule) => {
+                    const key = `${String(r.fromId).trim()}->${String(r.toId).trim()}`;
+                    rulesMap.set(key, (r.durationHours || 0) * 60);
+                });
+
                 const itemIndex = schedule.findIndex(s => s.id === itemId);
                 if (itemIndex === -1) return;
                 const item = schedule[itemIndex];
@@ -877,7 +904,7 @@ export const useStore = create<AppState>()(
                 const testQuantity = (q: number) => {
                     const tempSchedule = [...schedule];
                     tempSchedule[itemIndex] = { ...item, quantity: q };
-                    const simulated = recalculate(tempSchedule, articles, rules, programStartDate, holidays, manualStops, workSchedule);
+                    const simulated = recalculate(tempSchedule, articleMap, rulesMap, programStartDate, holidays, manualStops, workSchedule);
                     const simulatedItem = simulated[itemIndex];
                     if (!simulatedItem.computedEnd) return { error: Infinity, diff: 0, end: new Date() };
                     const diffMinutes = (simulatedItem.computedEnd.getTime() - targetEndDate.getTime()) / 60000;
@@ -1000,6 +1027,58 @@ export const useStore = create<AppState>()(
                     }
                 } else {
                     await supabase.from('scheduler_sequencer_results').delete().eq('process_id', pid).eq('scenario_id', scenarioId);
+                }
+            },
+
+            savePlannerState: async () => {
+                const state = get();
+                const pid = state.activeProcessId;
+                const pData = state.processes[pid];
+
+                const articlesArray = useArticleStore.getState().getArticles(pid);
+                const rulesArray = useChangeoverStore.getState().getRules(pid);
+
+                // Pre-index for Performance O(1)
+                const articleMap = new Map<string, Article>();
+                articlesArray.forEach((a: Article) => {
+                    const cleanSku = String(a.codigoProgramacion || '').replace(/\s+/g, '');
+                    articleMap.set(cleanSku, a);
+                    if (a.skuLaminacion) {
+                        articleMap.set(String(a.skuLaminacion).replace(/\s+/g, ''), a);
+                    }
+                });
+
+                const rulesMap = new Map<string, number>();
+                rulesArray.forEach((r: import('../types/changeover').ChangeoverRule) => {
+                    const key = `${String(r.fromId).trim()}->${String(r.toId).trim()}`;
+                    rulesMap.set(key, (r.durationHours || 0) * 60);
+                });
+
+                // Final simulation before saving
+                const finalSchedule = simulateSchedule(
+                    pData.schedule,
+                    pData.programStartDate,
+                    pData.holidays,
+                    pData.manualStops,
+                    pData.workSchedule,
+                    pData.autoStoppageRules,
+                    articleMap,
+                    rulesMap
+                );
+
+                const { error } = await supabase
+                    .from('scheduler_planner_state')
+                    .upsert({
+                        process_id: pid,
+                        state_data: {
+                            ...pData,
+                            schedule: finalSchedule
+                        },
+                        updated_at: new Date().toISOString()
+                    });
+
+                if (error) {
+                    console.error('Error saving planner state:', error);
                 }
             },
 

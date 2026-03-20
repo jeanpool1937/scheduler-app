@@ -35,3 +35,6 @@ blob-report/
 *.zip
 backend/rl_agent/__pycache__
 backend/rl_agent/.venv
+
+# Agent settings
+.claude/
